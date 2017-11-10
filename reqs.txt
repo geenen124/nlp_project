@@ -1,0 +1,33 @@
+Min Models:
+- Naive CBOW
+- CBOW + NLP (post-tagging, stop words etc)
+- RNN
+
+Top1, Top5
+
+Training split already set up
+- Don't use metadata for training algo
+
+use the dialog & caption for image retrieval,
+metadata only for qualitative analysis (informs "why?")
+
+Loss Fn: Cross Entropy
+- Fix Text input, vary 1 image per predicted
+    - one output per image
+    - softmax over outputs
+    - cross entropy based on the one hot vector (target img id)
+
+Loss Fn: Regression
+Text input -> MLP -> ResNet Features
+    - MSE Loss
+Distance metric as performance metric: L2
+    - Try other distance norms <- nice to include in qualitative analysis
+
+Write own pytorch dataloader
+
+Net exs:
+github: yunjey/pytorch-tutorial
+
+Caption img retrieval papers
+
+github: AashishV/NLP1_IR
