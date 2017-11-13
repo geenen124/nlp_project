@@ -31,3 +31,5 @@ github: yunjey/pytorch-tutorial
 Caption img retrieval papers
 
 github: AashishV/NLP1_IR
+
+LOAD DATA BY TUESDAY
