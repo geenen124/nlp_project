@@ -2,13 +2,12 @@ from __future__ import print_function
 import os
 import torch
 import pandas as pd
-import numpy as np 
-from torch.utils.data import DataSet, DataLoader
+import numpy as np
+from torch.utils.data import Dataset, DataLoader
 import json
 import h5py
 
-
-class EasyDataset(DataSet):
+class EasyDataset(Dataset):
     def __init__(self, data_directory, training_file,
                  image_mapping_file, image_feature_file):
         self.image_features = np.asarray(
@@ -24,7 +23,7 @@ class EasyDataset(DataSet):
 
     def __len__(self):
         return len(self.training_data)
-    
+
     def __getitem__(self, item_index):
         training_item_dict = self.training_data[item_index].copy()
         image_features = dict()
@@ -44,7 +43,7 @@ class EasyDataset(DataSet):
 
 if __name__ == '__main__':
     easy_dataset = EasyDataset(
-            data_directory="./data",
+            data_directory="./data/",
             training_file="IR_train_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",

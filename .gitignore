@@ -1,3 +1,7 @@
 .DS_Store
 *.swp
 *.swo
+/data/IR_image_features.h5
+/data/IR_train_easy.json
+/data/IR_train_hard.json
+/data/imgid2imginfo.json
