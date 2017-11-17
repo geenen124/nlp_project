@@ -21,6 +21,8 @@ class EasyDataset(Dataset):
         with open(data_directory + training_file, 'r') as f:
             self.training_data = list(json.load(f).values())
 
+        self.vocabulary_set = self.load_vocab_set()
+
     def __len__(self):
         return len(self.training_data)
 
@@ -39,12 +41,24 @@ class EasyDataset(Dataset):
 
         return training_item_dict
 
+    def get_vocab_set(self):
+        vocab = set()
+        for word_dict in self.dataset.training_data:
+            caption = word_dict["caption"].lower().split(" ")
+            vocab = vocab.union(caption)
+        return vocab
 
+    def save_vocab_set_to_file(self, csv_name="vocab_set"):
+        file_name = "./data/"+csv_name+".csv"
+        with open(file_name, "w") as vocab_file:
+            wr = csv.writer(vocab_file, delimiter='|', quoting=csv.QUOTE_ALL)
+            wr.writerow(self.vocabulary_set)
 
-if __name__ == '__main__':
-    easy_dataset = EasyDataset(
-            data_directory="./data/",
-            training_file="IR_train_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
-            )
+    def load_vocab_set(self, csv_name="vocab_set"):
+        vocab = set()
+        file_name = "./data/"+csv_name+".csv"
+        with open(file_name, "r") as vocab_file:
+            reader = csv.reader(vocab_file, delimiter='|', quoting=csv.QUOTE_ALL)
+            for row in reader:
+                vocab = vocab.union(row)
+        return vocab

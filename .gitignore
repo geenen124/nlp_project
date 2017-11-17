@@ -5,3 +5,4 @@
 /data/IR_train_easy.json
 /data/IR_train_hard.json
 /data/imgid2imginfo.json
+/__pycache__
