@@ -46,7 +46,13 @@ class EasyDataset(Dataset):
 
     def get_vocab_set(self):
         vocab = set()
-        for word_dict in self.dataset.training_data:
+
+        #Preprocessing
+        #lower case
+        #Vocab, w2i, i2w - mincount 5/3 - tag unknown token (UNK) the words with less than 5 or 3 counts
+        #Caption - "There is a zebrea in the pic."
+
+        for word_dict in self.training_data:
             caption = word_dict["caption"].lower().split(" ")
             vocab = vocab.union(caption)
         return vocab
