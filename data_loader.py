@@ -4,8 +4,10 @@ import torch
 import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+import csv
 import json
 import h5py
+
 
 class EasyDataset(Dataset):
     def __init__(self, data_directory, training_file,
@@ -27,17 +29,24 @@ class EasyDataset(Dataset):
         return len(self.training_data)
 
     def __getitem__(self, item_index):
+        print(item_index)
         training_item_dict = self.training_data[item_index].copy()
         image_features = dict()
         for image_index, image_id in enumerate(training_item_dict['img_list']):
+            print("In loop")
             this_images_features = self.image_features[
                     self.image_id_feature_mapping[str(image_id)]]
+            print("after this_images dataset")
             image_features[image_id] = this_images_features
+            print("after this_image assignment")
             # Also add this as the target image features if it corresponds
             if image_index == training_item_dict['target']:
-                training_item_dict['target_img_features'] = this_images_features
+                training_item_dict['target_img_features'] = \
+                        this_images_features
 
+        print("after for loop")
         training_item_dict['img_features'] = image_features
+        print("after assignment")
 
         return training_item_dict
 
