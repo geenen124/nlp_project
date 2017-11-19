@@ -1,12 +1,13 @@
 from __future__ import print_function
 import os
 import torch
-import pandas as pd
 import numpy as np
+import string
 from torch.utils.data import Dataset, DataLoader
 import csv
 import json
 import h5py
+from collections import Counter, defaultdict
 
 
 class EasyDataset(Dataset):
@@ -23,7 +24,13 @@ class EasyDataset(Dataset):
         with open(data_directory + training_file, 'r') as f:
             self.training_data = list(json.load(f).values())
 
-        self.vocabulary_set = self.load_vocab_set()
+        self.w2i = {}
+        self.i2w = {}
+        self.vocab_size = 0
+
+        #populate w2i, i2w, and get vocab size after simple preprocessing
+        self.get_vocab_set()
+
 
     def __len__(self):
         return len(self.training_data)
@@ -45,29 +52,35 @@ class EasyDataset(Dataset):
         return training_item_dict
 
     def get_vocab_set(self):
-        vocab = set()
-
-        #Preprocessing
-        #lower case
-        #Vocab, w2i, i2w - mincount 5/3 - tag unknown token (UNK) the words with less than 5 or 3 counts
-        #Caption - "There is a zebrea in the pic."
+        print ("Loading Vocabulary")
+        vocab_counter = Counter()
+        punctuation_remover = str.maketrans('', '', string.punctuation)
+        min_count = 5
 
         for word_dict in self.training_data:
-            caption = word_dict["caption"].lower().split(" ")
-            vocab = vocab.union(caption)
-        return vocab
+            #Preprocessing
+            caption = word_dict["caption"].translate(punctuation_remover).lower().split(" ")
+            vocab_counter.update(caption)
 
-    def save_vocab_set_to_file(self, csv_name="vocab_set"):
-        file_name = "./data/"+csv_name+".csv"
-        with open(file_name, "w") as vocab_file:
-            wr = csv.writer(vocab_file, delimiter='|', quoting=csv.QUOTE_ALL)
-            wr.writerow(self.vocabulary_set)
+        vocabulary_set = set()
+        unk_added = False
+        for word in set(list(vocab_counter.elements())):
+            if vocab_counter[word] > min_count and word:
+                vocabulary_set.add(word)
+            #tag unknown token (UNK) the words with less than 5 or 3 counts
+            elif not unk_added:
+                vocabulary_set.add("UNK")
+                unk_added = True
 
-    def load_vocab_set(self, csv_name="vocab_set"):
-        vocab = set()
-        file_name = "./data/"+csv_name+".csv"
-        with open(file_name, "r") as vocab_file:
-            reader = csv.reader(vocab_file, delimiter='|', quoting=csv.QUOTE_ALL)
-            for row in reader:
-                vocab = vocab.union(row)
-        return vocab
+        #Construct w2i and i2w
+        self.vocab_size = len(vocabulary_set)
+
+        iterable_vocab = list(vocabulary_set)
+        iterable_vocab.sort()
+
+        for index, word in enumerate(iterable_vocab):
+            self.w2i[word] = index
+            self.i2w[index] = word
+
+        #make defaultdit that points value to index of unknown tag UNK
+        self.w2i = defaultdict(lambda: self.w2i["UNK"], self.w2i)

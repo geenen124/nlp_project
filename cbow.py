@@ -6,15 +6,9 @@ from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
 
-
-def dataset_to_index_dict_and_size(dataset):
-    vocab_size = len(dataset.vocabulary_set)
-    vocab_list = list(dataset.vocabulary_set)
-    vocab_list.sort()
-    word_2_index = {}
-    for index, word in enumerate(vocab_list):
-        word_2_index[word] = index
-    return word_2_index, vocab_size
+use_cuda = False
+float_type = torch.FloatTensor
+long_type = torch.LongTensor
 
 
 class CBOW(nn.Module):
@@ -36,9 +30,39 @@ class CBOW(nn.Module):
         probability = F.sigmoid(self.output_layer(output_hidden))
         return probability
 
+def format_sample_into_tensors(sample_batch, sample_batch_length, embedding_space, w2i, model):
+    global float_type, long_type
 
-def train_network(dataset, num_epochs=1000, batch_size=32, use_cuda=False):
-    word_to_index, vocab_size = dataset_to_index_dict_and_size(dataset)
+    # Forward and backward pass per image, text is fixed
+    inputs = torch.zeros((10*sample_batch_length, 2048+embedding_space))
+    outputs = torch.zeros((10*sample_batch_length, 1))
+
+    b_index = 0
+    for sample in sample_batch:
+        caption = sample["caption"].lower().split(" ")
+        lookup_tensor = Variable(
+            torch.LongTensor([w2i[x] for x in caption]).type(long_type))
+        bow = model.encode_words(lookup_tensor)
+
+        for image_id in sample['img_list']:
+            image_features = sample['img_features'][image_id]
+            image_features_tensor = Variable(
+                    torch.from_numpy(
+                        image_features).type(float_type))
+            inputs[b_index] = torch.cat((bow, image_features_tensor)).data
+
+            if image_id == sample['target_img_id']:
+                outputs[b_index] = 1.0
+            b_index += 1
+
+    inputs = Variable(inputs.type(float_type))
+    outputs = Variable(outputs.type(float_type))
+    return inputs, outputs
+
+
+def train_network(dataset, num_epochs=1000, batch_size=32):
+    global use_cuda
+
     image_feature_size = 2048
     embedding_space = 150
     dataloader = torch.utils.data.DataLoader(
@@ -48,58 +72,27 @@ def train_network(dataset, num_epochs=1000, batch_size=32, use_cuda=False):
             shuffle=True)
 
     # Actually make the model
-    model = CBOW(vocab_size, embedding_space, image_feature_size, hidden_layer_dim=256)
+    model = CBOW(dataset.vocab_size, embedding_space, image_feature_size, hidden_layer_dim=256)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     train_loss = 0.0
 
-    float_type = torch.FloatTensor
-    long_type = torch.LongTensor
-    if use_cuda:
-        print("Using cuda")
-        float_type = torch.cuda.FloatTensor
-        long_type = torch.cuda.LongTensor
-        model = model.cuda()
 
     for ITER in range(num_epochs):
         print(f"Training Loss for {ITER} :  {train_loss}")
-        print(len(dataloader)*batch_size)
         train_loss = 0.0
         count = 0
         for sample_batch in dataloader:
 
             # Forward and backward pass per image, text is fixed
-            inputs = torch.zeros((10*batch_size, image_feature_size+embedding_space))
-            outputs = torch.zeros((10*batch_size, 1))
-            
-            b_index = 0
-            for sample in sample_batch:
-                caption = sample["caption"].lower().split(" ")
-                lookup_tensor = Variable(
-                    torch.LongTensor([word_to_index[x] for x in caption]).type(long_type))
-                bow = model.encode_words(lookup_tensor)
-
-                for image_id in sample['img_list']:
-                    image_features = sample['img_features'][image_id]
-                    image_features_tensor = Variable(
-                            torch.from_numpy(
-                                image_features).type(float_type))
-                    inputs[b_index] = torch.cat((bow, image_features_tensor)).data
-
-                    if image_id == sample['target_img_id']:
-                        outputs[b_index] = 1.0
-                    b_index += 1
-                count +=1
-
-            inputs = Variable(inputs.type(float_type))
-            outputs = Variable(outputs.type(float_type))
-
+            inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, embedding_space, dataset.w2i, model)
+            count += batch_size
             prediction = model(inputs)
 
             loss = F.l1_loss(prediction, outputs)
             if use_cuda:
                 loss = loss.cuda()
             train_loss += loss.data[0]
-            print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
+            # print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
 
             # backward pass
             model.zero_grad()
@@ -108,14 +101,51 @@ def train_network(dataset, num_epochs=1000, batch_size=32, use_cuda=False):
             # update weights
             optimizer.step()
 
-
         torch.save(model.state_dict(), "data/cbow.pt")
+
+        validate_saved_model(dataset.vocab_size, dataset.w2i, model=model)
 
     torch.save(model.state_dict(), "data/cbow.pt")
 
 
+def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
+    global use_cuda
+    # Loading a model
+    embedding_space = 150
+    print("Evaluating model on validation set")
+    if model is None:
+        print("Loading Saved Model: " + model_filename)
+        model = CBOW(vocab_size, embedding_space, 2048, hidden_layer_dim=256)
+        if not use_cuda:
+            #loading a model compiled with gpu on a machine that does not have a gpu
+            model.load_state_dict(torch.load("data/"+model_filename, map_location=lambda storage, loc: storage))
+        else:
+            model.load_state_dict(torch.load("data/"+model_filename))
+
+    valid_dataset = EasyDataset(
+            data_directory="./data/",
+            training_file="IR_val_easy.json",
+            image_mapping_file="IR_image_features2id.json",
+            image_feature_file="IR_image_features.h5",
+            )
+
+    inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model)
+
+    prediction = model(inputs)
+    loss = F.l1_loss(prediction, outputs)
+    print(f"Validation Loss : {loss.data[0]}")
+    return loss.data[0]
+
+
 
 if __name__ == '__main__':
+    use_cuda = torch.cuda.is_available()
+
+    if use_cuda:
+        print("Using cuda")
+        float_type = torch.cuda.FloatTensor
+        long_type = torch.cuda.LongTensor
+        model = model.cuda()
 
     easy_dataset = EasyDataset(
             data_directory="./data/",
@@ -123,13 +153,12 @@ if __name__ == '__main__':
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
             )
+
+    #Train Network
     train_network(
             easy_dataset,
             num_epochs=10,
-            batch_size=40000,
-            use_cuda=torch.cuda.is_available())
+            batch_size=40000)
 
-
- # Loading a model
- # model = CBOW(vocab_size, 5, image_feature_size, hidden_layer_dim=256)
- # model.load_state_dict(torch.load("data/cbow.pt"))
+    #Validate on validation set:
+    validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)
