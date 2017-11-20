@@ -94,7 +94,8 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
             if use_cuda:
                 loss = loss.cuda()
             train_loss += loss.data[0]
-            # print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
+
+            print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
 
             # backward pass
             model.zero_grad()
@@ -102,7 +103,7 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
 
             # update weights
             optimizer.step()
-
+        print("\n")
         torch.save(model.state_dict(), "data/cbow.pt")
 
         validate_saved_model(dataset.vocab_size, dataset.w2i, model=model)
@@ -160,7 +161,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
 
     prediction = model(inputs)
     print(prediction_to_accuracy(prediction, outputs))
-    loss = F.l1_loss(prediction, outputs)
+    loss = F.smooth_l1_loss(prediction, outputs)
     print(f"Validation Loss : {loss.data[0]}")
     return loss.data[0]
 
@@ -184,8 +185,8 @@ if __name__ == '__main__':
     #Train Network
     train_network(
             easy_dataset,
-            num_epochs=10,
-            batch_size=20000)
+            num_epochs=25,
+            batch_size=64)
 
     #Validate on validation set:
     validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)
