@@ -111,7 +111,7 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
     torch.save(model.state_dict(), "data/cbow.pt")
 
 
-def prediction_to_accuracy(predictions, actual):
+def top_rank_accuracy(predictions, actual, top_param=1):
     global use_cuda
     if use_cuda:
         predictions = predictions.cpu()
@@ -127,10 +127,12 @@ def prediction_to_accuracy(predictions, actual):
         end = start + 10
         prediction_slice = predictions_np[start:end]
         actual_slice = actual_np[start:end]
-        prediction_index = prediction_slice.argmax()
-        if actual_slice[prediction_index] == 1.0:
+
+        #do argmax on n (top_param) indexes
+        prediction_indexes = prediction_slice.flatten().argsort()[-top_param:][::-1]
+        if actual_slice[prediction_indexes].any():
             correct += 1
-    
+
     print(f"{correct} correct out of {total_size}")
     return float(correct) / total_size
 
@@ -160,7 +162,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model)
 
     prediction = model(inputs)
-    print(prediction_to_accuracy(prediction, outputs))
+    print(top_rank_accuracy(prediction, outputs, top_param=3))
     loss = F.smooth_l1_loss(prediction, outputs)
     print(f"Validation Loss : {loss.data[0]}")
     return loss.data[0]
@@ -183,10 +185,10 @@ if __name__ == '__main__':
             )
 
     #Train Network
-    train_network(
-            easy_dataset,
-            num_epochs=25,
-            batch_size=64)
+    # train_network(
+    #         easy_dataset,
+    #         num_epochs=25,
+    #         batch_size=64)
 
     #Validate on validation set:
     validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)
