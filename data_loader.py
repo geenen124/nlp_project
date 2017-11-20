@@ -55,7 +55,7 @@ class EasyDataset(Dataset):
         print ("Loading Vocabulary")
         vocab_counter = Counter()
         punctuation_remover = str.maketrans('', '', string.punctuation)
-        min_count = 5
+        min_count = 3
 
         for word_dict in self.training_data:
             #Preprocessing
