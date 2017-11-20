@@ -76,6 +76,8 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     train_loss = 0.0
 
+    if use_cuda:
+        model = model.cuda()
 
     for ITER in range(num_epochs):
         print(f"Training Loss for {ITER} :  {train_loss}")
@@ -88,7 +90,7 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
             count += batch_size
             prediction = model(inputs)
 
-            loss = F.l1_loss(prediction, outputs)
+            loss = F.smooth_l1_loss(prediction, outputs)
             if use_cuda:
                 loss = loss.cuda()
             train_loss += loss.data[0]
@@ -108,6 +110,30 @@ def train_network(dataset, num_epochs=1000, batch_size=32):
     torch.save(model.state_dict(), "data/cbow.pt")
 
 
+def prediction_to_accuracy(predictions, actual):
+    global use_cuda
+    if use_cuda:
+        predictions = predictions.cpu()
+        actual = actual.cpu()
+
+    total_size = len(predictions) / 10.0
+    correct = 0
+    predictions_np = predictions.data.numpy()
+    actual_np = actual.data.numpy()
+
+    for offset in range(int(total_size)):
+        start = 10*offset
+        end = start + 10
+        prediction_slice = predictions_np[start:end]
+        actual_slice = actual_np[start:end]
+        prediction_index = prediction_slice.argmax()
+        if actual_slice[prediction_index] == 1.0:
+            correct += 1
+    
+    print(f"{correct} correct out of {total_size}")
+    return float(correct) / total_size
+
+
 def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     global use_cuda
     # Loading a model
@@ -121,6 +147,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             model.load_state_dict(torch.load("data/"+model_filename, map_location=lambda storage, loc: storage))
         else:
             model.load_state_dict(torch.load("data/"+model_filename))
+            model = model.cuda()
 
     valid_dataset = EasyDataset(
             data_directory="./data/",
@@ -132,6 +159,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model)
 
     prediction = model(inputs)
+    print(prediction_to_accuracy(prediction, outputs))
     loss = F.l1_loss(prediction, outputs)
     print(f"Validation Loss : {loss.data[0]}")
     return loss.data[0]
@@ -145,7 +173,6 @@ if __name__ == '__main__':
         print("Using cuda")
         float_type = torch.cuda.FloatTensor
         long_type = torch.cuda.LongTensor
-        model = model.cuda()
 
     easy_dataset = EasyDataset(
             data_directory="./data/",
@@ -158,7 +185,7 @@ if __name__ == '__main__':
     train_network(
             easy_dataset,
             num_epochs=10,
-            batch_size=40000)
+            batch_size=20000)
 
     #Validate on validation set:
     validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)
