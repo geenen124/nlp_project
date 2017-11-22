@@ -12,15 +12,15 @@ use_cuda = False
 float_type = torch.FloatTensor
 long_type = torch.LongTensor
 
-
+# Outputs image features from words
 class CBOW(nn.Module):
     def __init__(self, vocab_size, embedding_space, image_feature_size, hidden_layer_dim):
         super().__init__()
         self.embeddings = nn.EmbeddingBag(vocab_size, embedding_space, mode='mean')
         self.hidden_layer = nn.Linear(
-                embedding_space+image_feature_size,
+                embedding_space,
                 hidden_layer_dim)
-        self.output_layer = nn.Linear(hidden_layer_dim, 1)
+        self.output_layer = nn.Linear(hidden_layer_dim, image_feature_size)
 
     def encode_words(self, word_inputs):
         offsets = Variable(torch.LongTensor([0]))
@@ -29,7 +29,7 @@ class CBOW(nn.Module):
 
     def forward(self, inputs):
         output_hidden = self.hidden_layer(inputs)
-        probability = F.sigmoid(self.output_layer(output_hidden))
+        probability = self.output_layer(output_hidden)
         return probability
 
 def format_sample_into_tensors(sample_batch,
@@ -39,25 +39,17 @@ def format_sample_into_tensors(sample_batch,
     global float_type, long_type
 
     # Forward and backward pass per image, text is fixed
-    inputs = torch.zeros((10*sample_batch_length, 2048+embedding_space))
-    outputs = torch.zeros((10*sample_batch_length, 1))
+    inputs = torch.zeros((sample_batch_length, embedding_space))
+    outputs = torch.zeros((sample_batch_length, 2048))
 
     b_index = 0
     for sample in sample_batch:
         lookup_tensor = Variable(
             torch.LongTensor([w2i[x] for x in sample["processed_word_inputs"]]).type(long_type))
         bow = model.encode_words(lookup_tensor)
-
-        for image_id in sample['img_list']:
-            image_features = sample['img_features'][image_id]
-            image_features_tensor = Variable(
-                    torch.from_numpy(
-                        image_features).type(float_type))
-            inputs[b_index] = torch.cat((bow, image_features_tensor)).data
-
-            if image_id == sample['target_img_id']:
-                outputs[b_index] = 1.0
-            b_index += 1
+        inputs[b_index] = bow.data
+        outputs[b_index] = torch.from_numpy(
+            sample["target_img_features"]).type(float_type)
 
     inputs = Variable(inputs.type(float_type))
     outputs = Variable(outputs.type(float_type))
@@ -126,22 +118,32 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
 
     graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
 
-def top_rank_accuracy(predictions, actual, top_param=3):
+def top_rank_accuracy(predictions, dataset, top_param=3):
     global use_cuda
     if use_cuda:
         predictions = predictions.cpu()
         actual = actual.cpu()
 
-    total_size = len(predictions) / 10.0
+    total_size = len(predictions)
     correct = 0
     predictions_np = predictions.data.numpy()
-    actual_np = actual.data.numpy()
 
-    for offset in range(int(total_size)):
-        start = 10*offset
-        end = start + 10
-        prediction_slice = predictions_np[start:end]
-        actual_slice = actual_np[start:end]
+    for index, prediction in  enumerate(predictions):
+        sample = dataset[index]
+        actual_slice = np.zeros(10)
+        prediction_slice = np.zeros(10) #loss from each image
+        b_index = 0
+        for image_id in sample['img_list']:
+            image_features = sample['img_features'][image_id]
+            image_features_tensor = Variable(
+                    torch.from_numpy(
+                        image_features).type(float_type))
+            image_loss_from_prediction = F.smooth_l1_loss(prediction, image_features_tensor)
+            prediction_slice[b_index] = 1.0 - image_loss_from_prediction.data[0]
+
+            if image_id == sample['target_img_id']:
+                actual_slice[b_index] = 1.0
+            b_index += 1
 
         #do argmax on n (top_param) indexes
         prediction_indexes = prediction_slice.flatten().argsort()[-top_param:][::-1]
@@ -150,7 +152,6 @@ def top_rank_accuracy(predictions, actual, top_param=3):
 
     print(f"{correct} correct out of {total_size}")
     return float(correct) / total_size
-
 
 def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     global use_cuda
@@ -172,19 +173,19 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             training_file="IR_val_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_val_processed_with_questions"
+            preprocessing=False,
+            preprocessed_data_filename="easy_val_unprocessed_regression"
     )
 
     inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
 
-    prediction = model(inputs)
+    predictions = model(inputs)
 
-    top_rank_1 = top_rank_accuracy(prediction, outputs, top_param=1)
-    top_rank_3 = top_rank_accuracy(prediction, outputs, top_param=3)
-    top_rank_5 = top_rank_accuracy(prediction, outputs, top_param=5)
+    top_rank_1 = top_rank_accuracy(predictions, valid_dataset, top_param=1)
+    top_rank_3 = top_rank_accuracy(predictions, valid_dataset, top_param=3)
+    top_rank_5 = top_rank_accuracy(predictions, valid_dataset, top_param=5)
 
-    loss = F.smooth_l1_loss(prediction, outputs)
+    loss = F.smooth_l1_loss(predictions, outputs)
     print(f"Validation Loss : {loss.data[0]}")
 
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
@@ -217,15 +218,15 @@ if __name__ == '__main__':
             training_file="IR_train_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_training_processed_with_questions"
+            preprocessing=False,
+            preprocessed_data_filename="easy_training_unprocessed_regression"
             )
 
     #Train Network
     train_network(
             easy_dataset,
             num_epochs=10,
-            batch_size=64)
+            batch_size=500)
 
     #Validate on validation set:
     # validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)
