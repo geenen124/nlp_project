@@ -148,16 +148,19 @@ class SimpleDataset(Dataset):
 
         elif self.preprocessing_type == "w2v":
             question_vec = np.zeros(384)
+            avg_count = 0
             for question in question_list:
                 answer = question[0].split(" ")[-1]
                 if answer == "yes":
                     question_vec = question_vec+self.preprocess_caption(question[0])
+                    avg_count += 1
                 elif answer == "no":
                     question_vec = question_vec-self.preprocess_caption(question[0])
-                else: #if answer is a word or sentence
-                    question_vec = question_vec+self.preprocess_caption(answer)
+                    avg_count += 1
+                # else: #if answer is a word or sentence
+                    # question_vec = question_vec+self.preprocess_caption(answer)
 
-            return question_vec/len(question_list)
+            return question_vec/len(avg_count)
 
         else:
             print("Unknown Preprocessing TYPE for Questions")
