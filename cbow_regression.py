@@ -29,8 +29,8 @@ class CBOW(nn.Module):
 
     def forward(self, inputs):
         output_hidden = self.hidden_layer(inputs)
-        probability = self.output_layer(output_hidden)
-        return probability
+        predicted_image_features = F.sigmoid(self.output_layer(output_hidden))
+        return predicted_image_features
 
 def format_sample_into_tensors(sample_batch,
                             sample_batch_length,
@@ -83,12 +83,19 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
         print(f"Training Loss for {ITER} :  {train_loss}")
         train_loss = 0.0
         count = 0
-        for sample_batch in dataloader:
+        # for sample_batch in dataloader:
+        for sample_batch in dataset:
 
             # Forward and backward pass per image, text is fixed
             inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, embedding_space, dataset.w2i, model, dataset)
             count += batch_size
             prediction = model(inputs)
+
+            print("First prediction")
+            print(prediction.data[0])
+
+            print("Actual")
+            print(outputs.data[0])
 
             loss = F.smooth_l1_loss(prediction, outputs)
             if use_cuda:
@@ -133,6 +140,7 @@ def top_rank_accuracy(predictions, dataset, top_param=3):
         actual_slice = np.zeros(10)
         prediction_slice = np.zeros(10) #loss from each image
         b_index = 0
+
         for image_id in sample['img_list']:
             image_features = sample['img_features'][image_id]
             image_features_tensor = Variable(
@@ -173,8 +181,8 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             training_file="IR_val_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=False,
-            preprocessed_data_filename="easy_val_unprocessed_regression"
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed_with_questions"
     )
 
     inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
@@ -218,15 +226,15 @@ if __name__ == '__main__':
             training_file="IR_train_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=False,
-            preprocessed_data_filename="easy_training_unprocessed_regression"
+            preprocessing=True,
+            preprocessed_data_filename="easy_training_processed_with_questions"
             )
 
     #Train Network
     train_network(
             easy_dataset,
-            num_epochs=10,
-            batch_size=500)
+            num_epochs=1000,
+            batch_size=1)
 
     #Validate on validation set:
     # validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)

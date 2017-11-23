@@ -13,10 +13,13 @@ import pickle
 nlp = spacy.load('en')
 
 #Dataset Class - combines json and image into a training example
+#preprocessing_type = stop_and_stem or word2vec
+
 class SimpleDataset(Dataset):
     def __init__(self, data_directory, training_file,
                  image_mapping_file, image_feature_file,
-                 preprocessing=False, preprocessed_data_filename="easy_dataset_preprocessed"):
+                 preprocessing=False, preprocessed_data_filename="easy_dataset_preprocessed",
+                 preprocessing_type="stop_and_stem"):
         self.image_features = np.asarray(
                 h5py.File(
                     data_directory + image_feature_file,
@@ -39,6 +42,7 @@ class SimpleDataset(Dataset):
             self.i2w = {}
             self.vocab_size = 0
             self.preprocessing = preprocessing
+            self.preprocessing_type = preprocessing_type
 
             #populate w2i, i2w, and get vocab size after simple preprocessing
             self.get_vocab_counter()
@@ -77,7 +81,13 @@ class SimpleDataset(Dataset):
             word_inputs = self.preprocess_example(word_dict)
             word_dict["processed_word_inputs"] = word_inputs
 
-            vocab_counter.update(word_inputs)
+            if self.preprocessing_type != "w2v":
+                vocab_counter.update(word_inputs)
+
+            # print("\n")
+            # print("word_inputs: ")
+            # print(word_inputs)
+            # print("\n")
 
             p_count+=1
             print(f"Preprocessed Count: {p_count}", end="\r")
@@ -90,28 +100,68 @@ class SimpleDataset(Dataset):
         if not self.preprocessing:
             return self.simple__caption_parsing(word_dict["caption"])
 
-        caption = self.preprocess_caption(word_dict["caption"])
-        caption.extend(self.preprocess_questions(word_dict["dialog"]))
+        if self.preprocessing_type == "stop_and_stem":
+            caption = self.preprocess_caption(word_dict["caption"])
+            caption.extend(self.preprocess_questions(word_dict["dialog"]))
+            return caption
 
-        return caption
+        elif self.preprocessing_type == "w2v":
+            word_vec = self.preprocess_caption(word_dict["caption"])
+            word_vec += self.preprocess_questions(word_dict["dialog"])
+            return word_vec
+
+        else:
+            print("Unknown preprocessing TYPE for Example")
+            return self.simple__caption_parsing(word_dict["caption"])
+
 
     def preprocess_caption(self, caption_str):
         caption = []
         doc = nlp(caption_str)
-        for token in doc:
-            if not token.is_stop and not token.is_punct and token.text != "yes":
-                caption.append(token.lemma_)
-        return caption
+
+        if self.preprocessing_type == "stop_and_stem":
+            for token in doc:
+                if not token.is_stop and not token.is_punct and token.text != "yes":
+                    caption.append(token.lemma_)
+            return caption
+
+        elif self.preprocessing_type == "w2v":
+            return doc.vector
+
+        else:
+            print("Unknown preprocessing TYPE for Caption")
+            return simple__caption_parsing(caption_str)
+
 
     def preprocess_questions(self, question_list):
-        question_text = []
-        for question in question_list:
-            answer = question[0].split(" ")[-1]
-            if answer == "yes":
-                question_text.extend(self.preprocess_caption(question[0]))
-            elif answer != "no":
-                question_text.append(answer)
-        return question_text
+
+
+        if self.preprocessing_type == "stop_and_stem":
+            question_text = []
+            for question in question_list:
+                answer = question[0].split(" ")[-1]
+                if answer == "yes":
+                    question_text.extend(self.preprocess_caption(question[0]))
+                elif answer != "no":
+                    question_text.append(answer)
+            return question_text
+
+        elif self.preprocessing_type == "w2v":
+            question_vec = np.zeros(384)
+            for question in question_list:
+                answer = question[0].split(" ")[-1]
+                if answer == "yes":
+                    question_vec = question_vec+self.preprocess_caption(question[0])
+                elif answer == "no":
+                    question_vec = question_vec-self.preprocess_caption(question[0])
+                else: #if answer is a word or sentence
+                    question_vec = question_vec+self.preprocess_caption(answer)
+
+            return question_vec/len(question_list)
+
+        else:
+            print("Unknown Preprocessing TYPE for Questions")
+            return []
 
     #using a min count, remove the least likely word from Counter,
     #and add the remaining words to w2i, i2w dictionaries
@@ -150,6 +200,7 @@ class SimpleDataset(Dataset):
         master_dict["i2w"] = self.i2w
         master_dict["vocab_size"] = self.vocab_size
         master_dict["preprocessing"] = self.preprocessing
+        master_dict["preprocessing_type"] = self.preprocessing_type
         master_dict["training_data_processed"] = self.training_data
         with open('data/'+self.preprocessed_data_filename+'.pkl', 'wb') as f:
             pickle.dump(master_dict, f, pickle.HIGHEST_PROTOCOL)
@@ -164,4 +215,5 @@ class SimpleDataset(Dataset):
         self.i2w = master_dict["i2w"]
         self.vocab_size = master_dict["vocab_size"]
         self.preprocessing = master_dict["preprocessing"]
+        self.preprocessing_type = master_dict["preprocessing_type"]
         self.training_data = master_dict["training_data_processed"]

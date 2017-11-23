@@ -44,9 +44,12 @@ def format_sample_into_tensors(sample_batch,
 
     b_index = 0
     for sample in sample_batch:
-        lookup_tensor = Variable(
-            torch.LongTensor([w2i[x] for x in sample["processed_word_inputs"]]).type(long_type))
-        bow = model.encode_words(lookup_tensor)
+        if dataset.preprocessing_type != "w2v":
+            lookup_tensor = Variable(
+                torch.LongTensor([w2i[x] for x in sample["processed_word_inputs"]]).type(long_type))
+            bow = model.encode_words(lookup_tensor)
+        else:
+            bow = Variable(torch.FloatTensor(sample["processed_word_inputs"]).type(float_type))
 
         for image_id in sample['img_list']:
             image_features = sample['img_features'][image_id]
@@ -69,6 +72,10 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
 
     image_feature_size = 2048
     embedding_space = 150
+    if dataset.preprocessing_type == "w2v":
+        embedding_space = 384
+
+
     dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=batch_size,
@@ -154,8 +161,22 @@ def top_rank_accuracy(predictions, actual, top_param=3):
 
 def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     global use_cuda
+
+    valid_dataset = SimpleDataset(
+            data_directory="./data/",
+            training_file="IR_val_easy.json",
+            image_mapping_file="IR_image_features2id.json",
+            image_feature_file="IR_image_features.h5",
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed_with_w2v",
+            preprocessing_type="w2v"
+    )
+
     # Loading a model
     embedding_space = 150
+    if valid_dataset.preprocessing_type == "w2v":
+        embedding_space = 384
+
     print("Evaluating model on validation set")
     if model is None:
         print("Loading Saved Model: " + model_filename)
@@ -167,14 +188,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             model.load_state_dict(torch.load("data/"+model_filename))
             model = model.cuda()
 
-    valid_dataset = SimpleDataset(
-            data_directory="./data/",
-            training_file="IR_val_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_val_processed_with_questions"
-    )
+
 
     inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
 
@@ -218,7 +232,8 @@ if __name__ == '__main__':
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
             preprocessing=True,
-            preprocessed_data_filename="easy_training_processed_with_questions"
+            preprocessed_data_filename="easy_training_processed_with_w2v",
+            preprocessing_type="w2v"
             )
 
     #Train Network
