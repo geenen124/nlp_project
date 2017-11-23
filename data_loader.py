@@ -160,7 +160,7 @@ class SimpleDataset(Dataset):
                 # else: #if answer is a word or sentence
                     # question_vec = question_vec+self.preprocess_caption(answer)
 
-            return question_vec/len(avg_count)
+            return question_vec/avg_count
 
         else:
             print("Unknown Preprocessing TYPE for Questions")
