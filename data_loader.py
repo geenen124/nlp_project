@@ -148,7 +148,7 @@ class SimpleDataset(Dataset):
 
         elif self.preprocessing_type == "w2v":
             question_vec = np.zeros(384)
-            avg_count = 0
+            avg_count = 1
             for question in question_list:
                 answer = question[0].split(" ")[-1]
                 if answer == "yes":
