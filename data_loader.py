@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 import spacy
 import pickle
 nlp = spacy.load('en')
+WORD_2_VEC_SIZE = 384
 
 #Dataset Class - combines json and image into a training example
 #preprocessing_type = stop_and_stem or word2vec
@@ -84,11 +85,6 @@ class SimpleDataset(Dataset):
             if self.preprocessing_type != "w2v":
                 vocab_counter.update(word_inputs)
 
-            # print("\n")
-            # print("word_inputs: ")
-            # print(word_inputs)
-            # print("\n")
-
             p_count+=1
             print(f"Preprocessed Count: {p_count}", end="\r")
 
@@ -107,7 +103,9 @@ class SimpleDataset(Dataset):
 
         elif self.preprocessing_type == "w2v":
             word_vec = self.preprocess_caption(word_dict["caption"])
-            word_vec += self.preprocess_questions(word_dict["dialog"])
+            question_vec, avg_count = self.preprocess_questions(word_dict["dialog"])
+            if avg_count > 0: #average the question vector with the question vector
+                word_vec = (question_vec + word_vec)/(avg_count+1)
             return word_vec
 
         else:
@@ -126,7 +124,7 @@ class SimpleDataset(Dataset):
             return caption
 
         elif self.preprocessing_type == "w2v":
-            return doc.vector
+            return doc.vector/doc.vector_norm
 
         else:
             print("Unknown preprocessing TYPE for Caption")
@@ -147,20 +145,20 @@ class SimpleDataset(Dataset):
             return question_text
 
         elif self.preprocessing_type == "w2v":
-            question_vec = np.zeros(384)
-            avg_count = 1
+            question_vec = np.zeros(WORD_2_VEC_SIZE)
+            # avg_count = 0
             for question in question_list:
                 answer = question[0].split(" ")[-1]
                 if answer == "yes":
                     question_vec = question_vec+self.preprocess_caption(question[0])
-                    avg_count += 1
+                    # avg_count += 1
                 elif answer == "no":
                     question_vec = question_vec-self.preprocess_caption(question[0])
-                    avg_count += 1
-                # else: #if answer is a word or sentence
-                    # question_vec = question_vec+self.preprocess_caption(answer)
+                    # avg_count += 1
+                else: #if answer is a word or sentence
+                    question_vec = question_vec+self.preprocess_caption(question[0].split("?")[-1])
 
-            return question_vec/avg_count
+            return question_vec, len(question_list)
 
         else:
             print("Unknown Preprocessing TYPE for Questions")
@@ -181,15 +179,17 @@ class SimpleDataset(Dataset):
                 unk_added = True
 
         #Construct w2i and i2w
-        self.vocab_size = len(vocabulary_set)
+        self.vocab_size = len(vocabulary_set)+1
 
         iterable_vocab = list(vocabulary_set)
         iterable_vocab.sort()
 
-        for index, word in enumerate(iterable_vocab):
-            self.w2i[word] = index
-            self.i2w[index] = word
+        self.w2i["PAD"] = 0
+        self.i2w[0] = "PAD"
 
+        for index, word in enumerate(iterable_vocab):
+            self.w2i[word] = index+1
+            self.i2w[index+1] = word
 
         self.save_preprocessed_dict()
         #make defaultdit that points value to index of unknown tag UNK

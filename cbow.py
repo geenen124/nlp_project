@@ -11,23 +11,27 @@ import matplotlib.pyplot as plt
 use_cuda = False
 float_type = torch.FloatTensor
 long_type = torch.LongTensor
+WORD_2_VEC_SIZE = 384
 
 
 class CBOW(nn.Module):
     def __init__(self, vocab_size, embedding_space, image_feature_size, hidden_layer_dim):
         super().__init__()
-        self.embeddings = nn.EmbeddingBag(vocab_size, embedding_space, mode='mean')
+        self.vocab_size = vocab_size
+        self.embeddings = nn.Embedding(vocab_size, embedding_space)
+
         self.hidden_layer = nn.Linear(
                 embedding_space+image_feature_size,
                 hidden_layer_dim)
+
         self.output_layer = nn.Linear(hidden_layer_dim, 1)
 
-    def encode_words(self, word_inputs):
-        offsets = Variable(torch.LongTensor([0]))
-        bow = self.embeddings(word_inputs, offsets)
-        return torch.squeeze(bow)
+    def forward(self, word_inputs, img_inputs):
+        embeddings = self.embeddings(word_inputs)
+        bow = torch.sum(embeddings, 1)
 
-    def forward(self, inputs):
+        inputs = torch.cat((bow, img_inputs), dim=1)
+
         output_hidden = self.hidden_layer(inputs)
         probability = F.sigmoid(self.output_layer(output_hidden))
         return probability
@@ -39,32 +43,43 @@ def format_sample_into_tensors(sample_batch,
     global float_type, long_type
 
     # Forward and backward pass per image, text is fixed
-    inputs = torch.zeros((10*sample_batch_length, 2048+embedding_space))
+    img_inputs = torch.zeros((10*sample_batch_length, 2048))
     outputs = torch.zeros((10*sample_batch_length, 1))
 
     b_index = 0
+
+    #Padding
+    sentence_max_length = 0
     for sample in sample_batch:
-        if dataset.preprocessing_type != "w2v":
-            lookup_tensor = Variable(
-                torch.LongTensor([w2i[x] for x in sample["processed_word_inputs"]]).type(long_type))
-            bow = model.encode_words(lookup_tensor)
-        else:
-            bow = Variable(torch.FloatTensor(sample["processed_word_inputs"]).type(float_type))
+        if len(sample["processed_word_inputs"]) > sentence_max_length:
+            sentence_max_length = len(sample["processed_word_inputs"])
+
+    word_inputs = torch.zeros((10*sample_batch_length, sentence_max_length)) #Padding zeros
+
+    for sample in sample_batch:
+        for index, x in enumerate(sample["processed_word_inputs"]):
+            word_inputs[b_index][index] = w2i[x]
+
+        lookup_tensor = word_inputs[b_index]
 
         for image_id in sample['img_list']:
             image_features = sample['img_features'][image_id]
-            image_features_tensor = Variable(
-                    torch.from_numpy(
-                        image_features).type(float_type))
-            inputs[b_index] = torch.cat((bow, image_features_tensor)).data
+            image_features_tensor = torch.from_numpy(image_features).type(float_type)
+
+            word_inputs[b_index] = lookup_tensor
+            img_inputs[b_index] = image_features_tensor
 
             if image_id == sample['target_img_id']:
                 outputs[b_index] = 1.0
             b_index += 1
 
-    inputs = Variable(inputs.type(float_type))
+
+
+    word_inputs = Variable(word_inputs.type(long_type))
+    img_inputs = Variable(img_inputs.type(float_type))
     outputs = Variable(outputs.type(float_type))
-    return inputs, outputs
+
+    return word_inputs, img_inputs, outputs
 
 
 def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
@@ -72,9 +87,6 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
 
     image_feature_size = 2048
     embedding_space = 150
-    if dataset.preprocessing_type == "w2v":
-        embedding_space = 384
-
 
     dataloader = torch.utils.data.DataLoader(
             dataset,
@@ -101,9 +113,9 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
         for sample_batch in dataloader:
 
             # Forward and backward pass per image, text is fixed
-            inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, embedding_space, dataset.w2i, model, dataset)
+            word_inputs, img_inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, embedding_space, dataset.w2i, model, dataset)
             count += batch_size
-            prediction = model(inputs)
+            prediction = model(word_inputs, img_inputs)
 
             loss = F.smooth_l1_loss(prediction, outputs)
             if use_cuda:
@@ -167,15 +179,12 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             training_file="IR_val_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_val_processed_with_w2v",
-            preprocessing_type="w2v"
+            preprocessing=False,
+            preprocessed_data_filename="easy_val_unprocessed"
     )
 
     # Loading a model
     embedding_space = 150
-    if valid_dataset.preprocessing_type == "w2v":
-        embedding_space = 384
 
     print("Evaluating model on validation set")
     if model is None:
@@ -189,10 +198,9 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             model = model.cuda()
 
 
+    word_inputs, img_inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
 
-    inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
-
-    prediction = model(inputs)
+    prediction = model(word_inputs, img_inputs)
 
     top_rank_1 = top_rank_accuracy(prediction, outputs, top_param=1)
     top_rank_3 = top_rank_accuracy(prediction, outputs, top_param=3)
@@ -209,8 +217,7 @@ def graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr):
     plt.plot(x_axis, top_rank_1_arr, label="top-1")
     plt.plot(x_axis, top_rank_3_arr, label="top-3")
     plt.plot(x_axis, top_rank_5_arr, label="top-5")
-    # plt.axis([1, len(top_rank_1_arr), 0, 1])
-    plt.legend()#bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.legend()
 
     plt.xlabel('Iteration')
     plt.ylabel('Probability')
@@ -231,9 +238,8 @@ if __name__ == '__main__':
             training_file="IR_train_easy.json",
             image_mapping_file="IR_image_features2id.json",
             image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_training_processed_with_w2v",
-            preprocessing_type="w2v"
+            preprocessing=False,
+            preprocessed_data_filename="easy_training_unprocessed"
             )
 
     #Train Network
