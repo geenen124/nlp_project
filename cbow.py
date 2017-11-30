@@ -11,13 +11,10 @@ import matplotlib.pyplot as plt
 use_cuda = False
 float_type = torch.FloatTensor
 long_type = torch.LongTensor
-WORD_2_VEC_SIZE = 384
-
 
 class CBOW(nn.Module):
     def __init__(self, vocab_size, embedding_space, image_feature_size, hidden_layer_dim):
         super().__init__()
-        self.vocab_size = vocab_size
         self.embeddings = nn.Embedding(vocab_size, embedding_space)
 
         self.hidden_layer = nn.Linear(
@@ -175,12 +172,9 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     global use_cuda
 
     valid_dataset = SimpleDataset(
-            data_directory="./data/",
             training_file="IR_val_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
-            preprocessing=False,
-            preprocessed_data_filename="easy_val_unprocessed"
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed"
     )
 
     # Loading a model
@@ -234,12 +228,9 @@ if __name__ == '__main__':
         long_type = torch.cuda.LongTensor
 
     easy_dataset = SimpleDataset(
-            data_directory="./data/",
             training_file="IR_train_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
-            preprocessing=False,
-            preprocessed_data_filename="easy_training_unprocessed"
+            preprocessing=True,
+            preprocessed_data_filename="easy_training_processed"
             )
 
     #Train Network

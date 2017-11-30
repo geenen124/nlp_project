@@ -11,56 +11,67 @@ import matplotlib.pyplot as plt
 use_cuda = False
 float_type = torch.FloatTensor
 long_type = torch.LongTensor
+loss_fn = torch.nn.MSELoss(size_average=True)
+# loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+# loss_fn = torch.nn.CosineEmbeddingLoss(margin=0,size_average=False)
 
 # Outputs image features from words
-class CBOW(nn.Module):
+class CBOW_REG(nn.Module):
     def __init__(self, vocab_size, embedding_space, image_feature_size, hidden_layer_dim):
         super().__init__()
-        self.embeddings = nn.EmbeddingBag(vocab_size, embedding_space, mode='mean')
+        self.embeddings = nn.Embedding(vocab_size, embedding_space)
         self.hidden_layer = nn.Linear(
                 embedding_space,
                 hidden_layer_dim)
         self.output_layer = nn.Linear(hidden_layer_dim, image_feature_size)
-
-    def encode_words(self, word_inputs):
-        offsets = Variable(torch.LongTensor([0]))
-        bow = self.embeddings(word_inputs, offsets)
-        return torch.squeeze(bow)
+        # self.activation = nn.SELU(inplace=True)
 
     def forward(self, inputs):
-        output_hidden = self.hidden_layer(inputs)
-        predicted_image_features = F.sigmoid(self.output_layer(output_hidden))
+        embeddings = self.embeddings(inputs)
+        bow = torch.sum(embeddings, 1)
+
+        output_hidden = self.hidden_layer(bow)
+        predicted_image_features = self.output_layer(output_hidden)
         return predicted_image_features
 
-def format_sample_into_tensors(sample_batch,
-                            sample_batch_length,
-                            embedding_space, w2i,
-                            model, dataset):
+
+def format_sample_into_tensors(sample_batch, sample_batch_length, w2i):
     global float_type, long_type
 
     # Forward and backward pass per image, text is fixed
-    inputs = torch.zeros((sample_batch_length, embedding_space))
+    b_index = 0
+
+    #Padding
+    sentence_max_length = 0
+    for sample in sample_batch:
+        if len(sample["processed_word_inputs"]) > sentence_max_length:
+            sentence_max_length = len(sample["processed_word_inputs"])
+
+    word_inputs = torch.zeros((sample_batch_length, sentence_max_length)) #Padding zeros
     outputs = torch.zeros((sample_batch_length, 2048))
 
-    b_index = 0
     for sample in sample_batch:
-        lookup_tensor = Variable(
-            torch.LongTensor([w2i[x] for x in sample["processed_word_inputs"]]).type(long_type))
-        bow = model.encode_words(lookup_tensor)
-        inputs[b_index] = bow.data
+        for index, x in enumerate(sample["processed_word_inputs"]):
+            word_inputs[b_index][index] = w2i[x]
+
         outputs[b_index] = torch.from_numpy(
             sample["target_img_features"]).type(float_type)
 
-    inputs = Variable(inputs.type(float_type))
+        b_index +=1
+
+    inputs = Variable(word_inputs.type(long_type))
+
     outputs = Variable(outputs.type(float_type))
+
     return inputs, outputs
 
 
-def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
-    global use_cuda
+def train_network(dataset, num_epochs=15, batch_size=32, save_model=False):
+    global use_cuda, loss_fn
 
     image_feature_size = 2048
     embedding_space = 150
+
     dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=batch_size,
@@ -68,7 +79,7 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
             shuffle=True)
 
     # Actually make the model
-    model = CBOW(dataset.vocab_size, embedding_space, image_feature_size, hidden_layer_dim=256)
+    model = CBOW_REG(dataset.vocab_size, embedding_space, image_feature_size, hidden_layer_dim=256)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     train_loss = 0.0
 
@@ -83,21 +94,13 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
         print(f"Training Loss for {ITER} :  {train_loss}")
         train_loss = 0.0
         count = 0
-        # for sample_batch in dataloader:
-        for sample_batch in dataset:
-
+        for sample_batch in dataloader:
             # Forward and backward pass per image, text is fixed
-            inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, embedding_space, dataset.w2i, model, dataset)
+            inputs, outputs = format_sample_into_tensors(sample_batch, batch_size, dataset.w2i)
             count += batch_size
             prediction = model(inputs)
 
-            print("First prediction")
-            print(prediction.data[0])
-
-            print("Actual")
-            print(outputs.data[0])
-
-            loss = F.smooth_l1_loss(prediction, outputs)
+            loss = loss_fn(prediction, outputs)
             if use_cuda:
                 loss = loss.cuda()
             train_loss += loss.data[0]
@@ -121,19 +124,18 @@ def train_network(dataset, num_epochs=1000, batch_size=32, save_model=False):
         top_rank_5_arr[ITER] = top_rank_5
 
     if save_model:
-        torch.save(model.state_dict(), "data/cbow.pt")
+        torch.save(model.state_dict(), "data/cbow_reg.pt")
 
     graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
 
 def top_rank_accuracy(predictions, dataset, top_param=3):
-    global use_cuda
+    global use_cuda, loss_fn
     if use_cuda:
         predictions = predictions.cpu()
         actual = actual.cpu()
 
     total_size = len(predictions)
     correct = 0
-    predictions_np = predictions.data.numpy()
 
     for index, prediction in  enumerate(predictions):
         sample = dataset[index]
@@ -146,7 +148,8 @@ def top_rank_accuracy(predictions, dataset, top_param=3):
             image_features_tensor = Variable(
                     torch.from_numpy(
                         image_features).type(float_type))
-            image_loss_from_prediction = F.smooth_l1_loss(prediction, image_features_tensor)
+
+            image_loss_from_prediction = loss_fn(prediction, image_features_tensor)
             prediction_slice[b_index] = 1.0 - image_loss_from_prediction.data[0]
 
             if image_id == sample['target_img_id']:
@@ -161,10 +164,17 @@ def top_rank_accuracy(predictions, dataset, top_param=3):
     print(f"{correct} correct out of {total_size}")
     return float(correct) / total_size
 
-def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
-    global use_cuda
+def validate_saved_model(vocab_size, w2i, model_filename="cbow_reg.pt", model=None):
+    global use_cuda, loss_fn
     # Loading a model
+    valid_dataset = SimpleDataset(
+            training_file="IR_val_easy.json",
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed"
+    )
+
     embedding_space = 150
+
     print("Evaluating model on validation set")
     if model is None:
         print("Loading Saved Model: " + model_filename)
@@ -176,16 +186,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
             model.load_state_dict(torch.load("data/"+model_filename))
             model = model.cuda()
 
-    valid_dataset = SimpleDataset(
-            data_directory="./data/",
-            training_file="IR_val_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
-            preprocessing=True,
-            preprocessed_data_filename="easy_val_processed_with_questions"
-    )
-
-    inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), embedding_space, w2i, model, valid_dataset)
+    inputs, outputs = format_sample_into_tensors(valid_dataset, len(valid_dataset), w2i)
 
     predictions = model(inputs)
 
@@ -193,7 +194,7 @@ def validate_saved_model(vocab_size, w2i, model_filename="cbow.pt", model=None):
     top_rank_3 = top_rank_accuracy(predictions, valid_dataset, top_param=3)
     top_rank_5 = top_rank_accuracy(predictions, valid_dataset, top_param=5)
 
-    loss = F.smooth_l1_loss(predictions, outputs)
+    loss = loss_fn(predictions, outputs)
     print(f"Validation Loss : {loss.data[0]}")
 
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
@@ -222,19 +223,17 @@ if __name__ == '__main__':
         long_type = torch.cuda.LongTensor
 
     easy_dataset = SimpleDataset(
-            data_directory="./data/",
             training_file="IR_train_easy.json",
-            image_mapping_file="IR_image_features2id.json",
-            image_feature_file="IR_image_features.h5",
             preprocessing=True,
-            preprocessed_data_filename="easy_training_processed_with_questions"
+            preprocessed_data_filename="easy_training_processed",
             )
+
 
     #Train Network
     train_network(
             easy_dataset,
-            num_epochs=1000,
-            batch_size=1)
+            num_epochs=15,
+            batch_size=64)
 
     #Validate on validation set:
     # validate_saved_model(easy_dataset.vocab_size, easy_dataset.w2i)

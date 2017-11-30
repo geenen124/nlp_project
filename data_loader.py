@@ -17,10 +17,13 @@ WORD_2_VEC_SIZE = 384
 #preprocessing_type = stop_and_stem or word2vec
 
 class SimpleDataset(Dataset):
-    def __init__(self, data_directory, training_file,
-                 image_mapping_file, image_feature_file,
-                 preprocessing=False, preprocessed_data_filename="easy_dataset_preprocessed",
+    def __init__(self, training_file, preprocessing=False,
+                 preprocessed_data_filename="easy_dataset_preprocessed",
                  preprocessing_type="stop_and_stem"):
+        data_directory = "./data/"
+        image_mapping_file = "IR_image_features2id.json"
+        image_feature_file = "IR_image_features.h5"
+
         self.image_features = np.asarray(
                 h5py.File(
                     data_directory + image_feature_file,
@@ -140,8 +143,8 @@ class SimpleDataset(Dataset):
                 answer = question[0].split(" ")[-1]
                 if answer == "yes":
                     question_text.extend(self.preprocess_caption(question[0]))
-                elif answer != "no":
-                    question_text.append(answer)
+                # elif answer != "no":
+                    # question_text.extend(self.preprocess_caption(question[0].split("?")[-1]))
             return question_text
 
         elif self.preprocessing_type == "w2v":
