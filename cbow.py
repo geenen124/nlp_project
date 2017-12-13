@@ -141,7 +141,7 @@ def train_cbow_network(dataset, validation_dataset,
         for sample_batch in dataloader:
 
             # Forward and backward pass per image, text is fixed
-            word_inputs, img_inputs, outputs = model.format_sample_into_tensors(sample_batch, batch_size, dataset.w2i)
+            word_inputs, img_inputs, outputs = model.format_sample_into_tensors(sample_batch, len(sample_batch), dataset.w2i)
             count += batch_size
             prediction = model(word_inputs, img_inputs)
 

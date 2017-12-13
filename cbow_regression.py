@@ -28,7 +28,7 @@ class CBOW_REG(nn.Module):
             self.float_type = torch.cuda.FloatTensor
             self.long_type = torch.cuda.LongTensor
             self.cuda()
-    
+
         if loss_fn is None:
             self.loss_fn = torch.nn.SmoothL1Loss(size_average=True)
         else:
@@ -145,7 +145,7 @@ def train_cbow_reg_network(dataset,
         count = 0
         for sample_batch in dataloader:
             # Forward and backward pass per image, text is fixed
-            inputs, outputs = model.format_sample_into_tensors(sample_batch, batch_size, dataset.w2i)
+            inputs, outputs = model.format_sample_into_tensors(sample_batch, len(sample_batch), dataset.w2i)
             count += batch_size
             prediction = model(inputs)
 
