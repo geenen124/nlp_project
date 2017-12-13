@@ -35,36 +35,28 @@ class GRU_REG(nn.Module):
             self.cuda()
 
         if loss_fn is None:
-            self.loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+            # self.loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+            loss_fn = torch.nn.MSELoss(size_average=True)
         else:
             self.loss_fn = loss_fn
-
-        self.iter = 0
 
     def forward(self, sentences, sentences_mask):
 
         batch_size = sentences.data.shape[0]
-        sequence_size = sentences.data.shape[0]
+        sequence_size = sentences.data.shape[1]
         embeds = self.embeddings(sentences)
 
         packed_embedding = pack_padded_sequence(embeds.view(batch_size, -1, self.embedding_space), sentences_mask, batch_first=True)
-        outputs, h_gru = self.gru(packed_embedding, self.init_hidden(batch_size))
+        outputs, h_gru = self.gru(packed_embedding)
 
-        ## unpacking:
+        ## unpacking: notice that:  last_out ==  h_gru[0,:,:]
         # outputs_pad, output_lengths = pad_packed_sequence(outputs, batch_first=True)
         # output_lengths = Variable(torch.LongTensor(output_lengths))
         # last_out = torch.gather(outputs_pad, 1, output_lengths.view(-1, 1, 1).expand(batch_size, 1, self.hidden_layer_dim)-1).view(batch_size, self.hidden_layer_dim)
-        # last_out =  h_gru[0,:,:]
 
         predicted_image_features = self.output_layer(h_gru[0,:,:])
         return predicted_image_features
 
-
-    def init_hidden(self, batch_size):
-        ih = Variable(torch.zeros(batch_size, self.n_layers, self.hidden_layer_dim))
-        if self.use_cuda:
-            ih = ih.cuda()
-        return ih
 
     def format_sample_into_tensors(self, sample_batch, sample_batch_length, w2i):
         # Forward and backward pass per image, text is fixed
@@ -98,22 +90,23 @@ class GRU_REG(nn.Module):
         inputs = Variable(word_inputs.type(self.long_type))
 
         outputs = [outputs[i] for i in sorted_index]
-        outputs = torch.from_numpy(np.array(outputs, dtype=np.int64))
+        outputs = torch.from_numpy(np.array(outputs))
         outputs = Variable(outputs.type(self.float_type))
 
         sentences_mask = [sentences_mask[i] for i in sorted_index]
 
-        return inputs, sentences_mask, outputs
+        return inputs, sentences_mask, outputs, sorted_index
 
-    def top_rank_accuracy(self, predictions, dataset, top_param=3):
+    def top_rank_accuracy(self, predictions, dataset, sorted_index, top_param=3, val=False):
         if self.use_cuda:
             predictions = predictions.cpu()
             actual = actual.cpu()
 
         total_size = len(predictions)
         correct = 0
+        dataset = [dataset[i] for i in sorted_index]
 
-        for index, prediction in  enumerate(predictions):
+        for index, prediction in enumerate(predictions):
             sample = dataset[index]
             actual_slice = np.zeros(10)
             prediction_slice = np.zeros(10) #loss from each image
@@ -137,7 +130,8 @@ class GRU_REG(nn.Module):
             if actual_slice[prediction_indexes].any():
                 correct += 1
 
-        print(f"{correct} correct out of {total_size}")
+        if val == True:
+            print(f"{correct} correct out of {total_size}")
         return float(correct) / total_size
 
 
@@ -153,13 +147,15 @@ def train_gru_reg_network(dataset,
                           use_cuda=False):
 
     if loss_fn is None:
-        loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+        # loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+        loss_fn = torch.nn.MSELoss(size_average=True)
 
 
     dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=batch_size,
             collate_fn=lambda x: x,
+            # shuffle=False)
             shuffle=True)
 
     # Actually make the model
@@ -167,8 +163,6 @@ def train_gru_reg_network(dataset,
                     embedding_space=embedding_space,
                     hidden_layer_dim=hidden_layer_dim, use_cuda=use_cuda)
 
-
-    # hx = Variable(torch.randn(1, batch_size, hidden_layer_dim))
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     train_loss = 0.0
@@ -181,11 +175,12 @@ def train_gru_reg_network(dataset,
         print(f"Training Loss for {ITER} :  {train_loss}")
         train_loss = 0.0
         count = 0
-        # model.init_hidden(batch_size)
 
+        t_rank_1 = 0
         for sample_batch in dataloader:
+
             # Forward and backward pass per image, text is fixed
-            inputs, sentences_mask, outputs = model.format_sample_into_tensors(sample_batch, batch_size, dataset.w2i)
+            inputs, sentences_mask, outputs, sorted_index = model.format_sample_into_tensors(sample_batch, batch_size, dataset.w2i)
             count += batch_size
             prediction = model(inputs, sentences_mask)
 
@@ -205,6 +200,8 @@ def train_gru_reg_network(dataset,
             optimizer.step()
 
         print("\n")
+
+
         validation_loss, top_rank_1, top_rank_3, top_rank_5 = validate_gru_reg_model(
                                                                 dataset.vocab_size,
                                                                 dataset.w2i,
@@ -213,6 +210,10 @@ def train_gru_reg_network(dataset,
         top_rank_1_arr[ITER] = top_rank_1
         top_rank_3_arr[ITER] = top_rank_3
         top_rank_5_arr[ITER] = top_rank_5
+
+        print(f"Top 1: {top_rank_1}")
+        print(f"Top 3: {top_rank_3}")
+        print(f"Top 5: {top_rank_5}")
 
     if save_model:
         torch.save(model.state_dict(), "data/gru_reg.pt")
@@ -234,13 +235,13 @@ def validate_gru_reg_model(vocab_size, w2i, validation_dataset, model_filename="
             model.load_state_dict(torch.load("data/"+model_filename))
             model = model.cuda()
 
-    inputs, sentences_mask, outputs = model.format_sample_into_tensors(validation_dataset, len(validation_dataset), w2i)
-    # model.init_hidden(len(validation_dataset))
+    inputs, sentences_mask, outputs, sorted_index = model.format_sample_into_tensors(validation_dataset, len(validation_dataset), w2i)
+
     predictions = model(inputs, sentences_mask)
 
-    top_rank_1 = model.top_rank_accuracy(predictions, validation_dataset, top_param=1)
-    top_rank_3 = model.top_rank_accuracy(predictions, validation_dataset, top_param=3)
-    top_rank_5 = model.top_rank_accuracy(predictions, validation_dataset, top_param=5)
+    top_rank_1 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=1, val=True)
+    top_rank_3 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=3, val=True)
+    top_rank_5 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=5, val=True)
 
     loss = model.loss_fn(predictions, outputs)
     print(f"Validation Loss : {loss.data[0]}")
@@ -271,7 +272,7 @@ top_rank_3_arr, top_rank_5_arr = train_gru_reg_network(
                                             validation_dataset,
                                             num_epochs=5,
                                             batch_size=256,
-                                            embedding_space=300,
+                                            embedding_space=200,
                                             hidden_layer_dim=256,
                                             learning_rate=0.001,
                                             use_cuda=use_cuda)
