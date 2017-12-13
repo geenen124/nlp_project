@@ -98,7 +98,7 @@ class GRU_REG(nn.Module):
         inputs = Variable(word_inputs.type(self.long_type))
 
         outputs = [outputs[i] for i in sorted_index]
-        outputs = torch.from_numpy(np.array(outputs, dtype=np.int64))
+        outputs = torch.from_numpy(np.array(outputs, dtype=np.float64))
         outputs = Variable(outputs.type(self.float_type))
 
         sentences_mask = [sentences_mask[i] for i in sorted_index]
