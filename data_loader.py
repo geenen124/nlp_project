@@ -143,6 +143,8 @@ class SimpleDataset(Dataset):
                 answer = question[0].split(" ")[-1]
                 if answer == "yes":
                     question_text.extend(self.preprocess_caption(question[0]))
+                elif answer != "no":
+                    question_text.extend(self.preprocess_caption(question[0]))
                 # elif answer != "no":
                     # question_text.extend(self.preprocess_caption(question[0].split("?")[-1]))
             return question_text
@@ -159,7 +161,8 @@ class SimpleDataset(Dataset):
                     question_vec = question_vec-self.preprocess_caption(question[0])
                     # avg_count += 1
                 else: #if answer is a word or sentence
-                    question_vec = question_vec+self.preprocess_caption(question[0].split("?")[-1])
+                    question_vec = question_vec+self.preprocess_caption(question[0].replace("?", ""))
+                    #  question_vec = question_vec+self.preprocess_caption(question[0].split("?")[-1])
 
             return question_vec, len(question_list)
 
