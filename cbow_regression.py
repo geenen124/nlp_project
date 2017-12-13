@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+from IPython import embed
 
 # Outputs image features from words
 class CBOW_REG(nn.Module):
@@ -77,11 +78,13 @@ class CBOW_REG(nn.Module):
 
         total_size = len(predictions)
         correct = 0
+        correct_cos = 0
 
         for index, prediction in  enumerate(predictions):
             sample = dataset[index]
             actual_slice = np.zeros(10)
             prediction_slice = np.zeros(10) #loss from each image
+            similarity_slice = np.zeros(10) #loss from each image
             b_index = 0
 
             for image_id in sample['img_list']:
@@ -93,19 +96,26 @@ class CBOW_REG(nn.Module):
                     image_features_tensor = image_features_tensor.cpu()
 
                 image_loss_from_prediction = self.loss_fn(prediction, image_features_tensor)
+                image_similarity_from_prediction = F.cosine_similarity(prediction, image_features_tensor, dim=0)
                 prediction_slice[b_index] = 1.0 - image_loss_from_prediction.data[0]
+                similarity_slice[b_index] = image_similarity_from_prediction.data[0]
 
                 if image_id == sample['target_img_id']:
                     actual_slice[b_index] = 1.0
                 b_index += 1
 
             #do argmax on n (top_param) indexes
+            similarity_indexes = similarity_slice.flatten().argsort()[-top_param:][::-1]
             prediction_indexes = prediction_slice.flatten().argsort()[-top_param:][::-1]
+
+            if actual_slice[similarity_indexes].any():
+                correct_cos += 1
             if actual_slice[prediction_indexes].any():
                 correct += 1
 
-        print(f"{correct} correct out of {total_size}")
-        return float(correct) / total_size
+        print(f"{correct} correct out of {total_size} using loss")
+        print(f"{correct_cos} correct out of {total_size} using similarity")
+        return float(correct_cos) / total_size
 
 def train_cbow_reg_network(dataset,
                           validation_dataset,
@@ -194,15 +204,53 @@ def validate_cbow_reg_model(vocab_size, w2i, validation_dataset, model_filename=
             model.load_state_dict(torch.load("data/"+model_filename))
             model = model.cuda()
 
-    inputs, outputs = model.format_sample_into_tensors(validation_dataset, len(validation_dataset), w2i)
+    val_dl = torch.utils.data.DataLoader(validation_dataset, batch_size=256, collate_fn=lambda x: x)
+    outputs = None
+    prediction = None
 
-    predictions = model(inputs)
+    for sample_batch in val_dl:
+        word_inputs, outputs_batch = model.format_sample_into_tensors(sample_batch, len(sample_batch), dataset.w2i)
+        pred = model(word_inputs)
+        if outputs is None or prediction is None:
+            outputs = outputs_batch
+            prediction = pred
+        else:
+            outputs = torch.cat((outputs, outputs_batch), dim=0)
+            prediction = torch.cat((prediction, pred), dim=0)
 
-    top_rank_1 = model.top_rank_accuracy(predictions, validation_dataset, top_param=1)
-    top_rank_3 = model.top_rank_accuracy(predictions, validation_dataset, top_param=3)
-    top_rank_5 = model.top_rank_accuracy(predictions, validation_dataset, top_param=5)
+    top_rank_1 = model.top_rank_accuracy(prediction, validation_dataset, top_param=1)
+    top_rank_3 = model.top_rank_accuracy(prediction, validation_dataset, top_param=3)
+    top_rank_5 = model.top_rank_accuracy(prediction, validation_dataset, top_param=5)
 
-    loss = model.loss_fn(predictions, outputs)
+    loss = model.loss_fn(prediction, outputs)
     print(f"Validation Loss : {loss.data[0]}")
 
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
+
+if __name__=="__main__":
+    use_cuda = torch.cuda.is_available()
+
+    dataset = SimpleDataset(
+            training_file="IR_train_easy.json",
+            preprocessing=False,
+            preprocessed_data_filename="easy_training_unprocessed"
+            )
+
+    validation_dataset = SimpleDataset(
+            training_file="IR_val_easy.json",
+            preprocessing=False,
+            preprocessed_data_filename="easy_val_unprocessed"
+    )
+
+    model, top_rank_1_arr, \
+    top_rank_3_arr, top_rank_5_arr = train_cbow_reg_network(
+                                                dataset,
+                                                validation_dataset,
+                                                num_epochs=5,
+                                                batch_size=256,
+                                                embedding_space=200,
+                                                hidden_layer_dim=256,
+                                                learning_rate=0.001,
+                                                use_cuda=use_cuda)
+
+    #  graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
