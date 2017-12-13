@@ -247,21 +247,22 @@ def validate_gru_reg_model(vocab_size, w2i, validation_dataset, model_filename="
             model = model.cuda()
 
     val_dl = torch.utils.data.DataLoader(validation_dataset, batch_size=64, collate_fn=lambda x: x)
+
     predictions = None
     outputs  = None
     sorted_index = []
 
-    for batch in val_dl:
-        word_inputs, sentences_mask, outputs_batch, sorted_index_batch = model.format_sample_into_tensors(batch, len(batch), w2i)
-        sorted_index.extend(sorted_index_batch)
+    word_inputs, sentences_mask, outputs, sorted_index = model.format_sample_into_tensors(validation_dataset, len(validation_dataset), w2i)
 
-        pred = model(word_inputs, sentences_mask)
-        if predictions is None or outputs is None:
+    for i in range(0, len(validation_dataset), 64):
+        words = word_inputs[i:i+64]
+        mask = sentences_mask[i:i+64]
+        pred = model(words, mask)
+        if predictions is None:
             predictions = pred
-            outputs = outputs_batch
         else:
             predictions = torch.cat((predictions, pred), dim=0)
-            outputs = torch.cat((outputs, outputs_batch), dim=0)
+
 
     loss = model.loss_fn(predictions, outputs)
     print(f"Validation Loss : {loss.data[0]}")
@@ -279,13 +280,13 @@ if __name__ == "__main__":
 
     dataset = SimpleDataset(
             training_file="IR_train_easy.json",
-            preprocessing=False,
+            preprocessing=True,
             preprocessed_data_filename="easy_training_unprocessed"
             )
 
     validation_dataset = SimpleDataset(
             training_file="IR_val_easy.json",
-            preprocessing=False,
+            preprocessing=True,
             preprocessed_data_filename="easy_val_unprocessed"
     )
 
@@ -293,7 +294,7 @@ if __name__ == "__main__":
     top_rank_3_arr, top_rank_5_arr = train_gru_reg_network(
                                                 dataset,
                                                 validation_dataset,
-                                                num_epochs=5,
+                                                num_epochs=20,
                                                 batch_size=256,
                                                 embedding_space=200,
                                                 hidden_layer_dim=256,
