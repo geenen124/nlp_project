@@ -74,7 +74,6 @@ class CBOW_REG(nn.Module):
     def top_rank_accuracy(self, predictions, dataset, top_param=3):
         if self.use_cuda:
             predictions = predictions.cpu()
-            actual = actual.cpu()
 
         total_size = len(predictions)
         correct = 0
@@ -90,6 +89,8 @@ class CBOW_REG(nn.Module):
                 image_features_tensor = Variable(
                         torch.from_numpy(
                             image_features).type(self.float_type))
+                if self.use_cuda:
+                    image_features_tensor = image_features_tensor.cpu()
 
                 image_loss_from_prediction = self.loss_fn(prediction, image_features_tensor)
                 prediction_slice[b_index] = 1.0 - image_loss_from_prediction.data[0]

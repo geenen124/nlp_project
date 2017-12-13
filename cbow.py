@@ -126,7 +126,7 @@ def train_cbow_network(dataset, validation_dataset,
         loss_fn = torch.nn.SmoothL1Loss(size_average=True)
 
     # Actually make the model
-    model = CBOW(dataset.vocab_size, loss_fn=loss_fn, embedding_space=150, hidden_layer_dim=hidden_layer_dim, use_cuda=use_cuda)
+    model = CBOW(dataset.vocab_size, loss_fn=loss_fn, embedding_space=embedding_space, hidden_layer_dim=hidden_layer_dim, use_cuda=use_cuda)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     train_loss = 0.0
 
