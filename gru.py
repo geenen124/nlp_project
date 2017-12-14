@@ -99,16 +99,16 @@ class GRU(nn.Module):
         #Sort
         sorted_index = len_value_argsort(sentences_mask)
 
-        word_inputs = [word_inputs[i] for i in sorted_index]
-        word_inputs = torch.from_numpy(np.array(word_inputs, dtype=np.int64).repeat(10, axis=0))
+        word_inputs = word_inputs[sorted_index]
+        word_inputs = torch.from_numpy(np.asarray(word_inputs, dtype=np.int64).repeat(10, axis=0))
         word_inputs = Variable(word_inputs.type(self.long_type))
 
         img_inputs = sort_larger_array_by_index(img_inputs, sorted_index)
-        img_inputs = torch.from_numpy(np.array(img_inputs))
+        img_inputs = torch.from_numpy(np.asarray(img_inputs))
         img_inputs = Variable(img_inputs.type(self.float_type))
 
         outputs = sort_larger_array_by_index(outputs, sorted_index)
-        outputs = torch.from_numpy(np.array(outputs))
+        outputs = torch.from_numpy(np.asarray(outputs))
         outputs = Variable(outputs.type(self.float_type))
 
         sentences_mask = [sentences_mask[i] for i in sorted_index]
@@ -165,7 +165,7 @@ def train_gru_network(dataset,
 
     # Actually make the model
     model = GRU(dataset.vocab_size, loss_fn=loss_fn,
-                embedding_space=150, hidden_layer_dim=hidden_layer_dim,
+                embedding_space=embedding_space, hidden_layer_dim=hidden_layer_dim,
                 use_cuda=use_cuda)
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -205,6 +205,7 @@ def train_gru_network(dataset,
                                                                 dataset.vocab_size,
                                                                 dataset.w2i,
                                                                 validation_dataset,
+                                                                use_cuda=use_cuda,
                                                                 model=model)
         top_rank_1_arr[ITER] = top_rank_1
         top_rank_3_arr[ITER] = top_rank_3
@@ -233,9 +234,24 @@ def validate_gru_model(vocab_size,
             model.load_state_dict(torch.load("data/"+model_filename))
             model = model.cuda()
 
-    word_inputs, sentences_mask, img_inputs, outputs = model.format_sample_into_tensors(validation_dataset, len(validation_dataset), w2i)
+    torch.cuda.empty_cache()
+    model = model.cpu()
+    model.float_type = torch.FloatTensor
+    model.long_type = torch.LongTensor
 
-    prediction = model(word_inputs, sentences_mask, img_inputs)
+    val_dl = torch.utils.data.DataLoader(validation_dataset, batch_size=1, collate_fn=lambda x: x)
+    outputs = None
+    prediction = None
+
+    for batch in val_dl:
+        word_inputs, sentences_mask, img_inputs, outputs_batch = model.format_sample_into_tensors(batch, len(batch), w2i)
+        pred = model(word_inputs, sentences_mask, img_inputs)
+        if outputs is None or prediction is None:
+            outputs = outputs_batch
+            prediction = pred
+        else:
+            outputs = torch.cat((outputs, outputs_batch), dim=0)
+            prediction = torch.cat((prediction, pred), dim=0)
 
     top_rank_1 = model.top_rank_accuracy(prediction, outputs, top_param=1)
     top_rank_3 = model.top_rank_accuracy(prediction, outputs, top_param=3)
@@ -243,6 +259,10 @@ def validate_gru_model(vocab_size,
 
     loss = model.loss_fn(prediction, outputs)
     print(f"Validation Loss : {loss.data[0]}")
+    if use_cuda:
+        model = model.cuda()
+        model.float_type = torch.cuda.FloatTensor
+        model.long_type = torch.cuda.LongTensor
 
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
 
@@ -254,30 +274,33 @@ def sort_larger_array_by_index(arr, sorted_index):
 def len_value_argsort(seq):
     return sorted(range(len(seq)), key=lambda x: seq[x], reverse=True)
 
+if __name__=="__main__":
+    use_cuda = torch.cuda.is_available()
 
-use_cuda = torch.cuda.is_available()
+    dataset = SimpleDataset(
+            training_file="IR_train_easy.json",
+            preprocessing=True,
+            preprocessed_data_filename="easy_training_processed_with_questions"
+            )
 
-dataset = SimpleDataset(
-        training_file="IR_train_easy.json",
-        preprocessing=False,
-        preprocessed_data_filename="easy_training_unprocessed"
-        )
+    validation_dataset = SimpleDataset(
+            training_file="IR_val_easy.json",
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed_with_questions"
+    )
 
-validation_dataset = SimpleDataset(
-        training_file="IR_val_easy.json",
-        preprocessing=False,
-        preprocessed_data_filename="easy_val_unprocessed"
-)
+    model, top_rank_1_arr, \
+    top_rank_3_arr, top_rank_5_arr = train_gru_network(
+                                                dataset,
+                                                validation_dataset,
+                                                num_epochs=30,
+                                                batch_size=256,
+                                                embedding_space=300,
+                                                hidden_layer_dim=256,
+                                                learning_rate=0.001,
+                                                use_cuda=use_cuda)
 
-model, top_rank_1_arr, \
-top_rank_3_arr, top_rank_5_arr = train_gru_network(
-                                            dataset,
-                                            validation_dataset,
-                                            num_epochs=5,
-                                            batch_size=256,
-                                            embedding_space=200,
-                                            hidden_layer_dim=256,
-                                            learning_rate=0.001,
-                                            use_cuda=use_cuda)
+    from run_experiment import save_top_ranks
+    save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, filename="GRU_NORMAL_PREPROCESS_W_QUESTIONS.pt")
 
-# graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
+    #  graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
