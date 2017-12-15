@@ -6,6 +6,7 @@ from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
+from run_experiment import save_top_ranks, save_model
 
 
 class CBOW(nn.Module):
@@ -204,3 +205,38 @@ def validate_cbow_model(vocab_size,
     print(f"Validation Loss : {loss.data[0]}")
 
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
+
+if __name__ == "__main__":
+    use_cuda = torch.cuda.is_available()
+
+    dataset = SimpleDataset(
+            training_file="IR_train_easy.json",
+            preprocessing=True,
+            preprocessed_data_filename="easy_training_processed"
+            )
+
+    validation_dataset = SimpleDataset(
+            training_file="IR_val_easy.json",
+            preprocessing=True,
+            preprocessed_data_filename="easy_val_processed"
+    )
+
+    model, top_rank_1_arr, \
+    top_rank_3_arr, top_rank_5_arr = train_cbow_network(
+                                                dataset,
+                                                validation_dataset,
+                                                num_epochs=30,
+                                                batch_size=64,
+                                                embedding_space=150,
+                                                hidden_layer_dim=256,
+                                                learning_rate=0.0001,
+                                                use_cuda=use_cuda)
+    
+    save_model("CBOW_NAIVE_EASY",
+            hidden_layer_dim=256,
+            embedding_space=150,
+            learning_rate=0.0001,
+            loss_fn_name="smooth_l1",
+            model=model)
+    save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, "./results_cbow_naive_easy.p")
+

@@ -33,7 +33,8 @@ class SimpleDataset(Dataset):
             self.image_id_feature_mapping = json.load(f)['IR_imgid2id']
 
         with open(data_directory + training_file, 'r') as f:
-            self.training_data = list(json.load(f).values())
+            self.training_data = list(filter(lambda x: len(x["img_list"]) == 10,
+                list(json.load(f).values())))
 
         self.preprocessed_data_filename = preprocessed_data_filename
 
@@ -225,4 +226,4 @@ class SimpleDataset(Dataset):
         self.vocab_size = master_dict["vocab_size"]
         self.preprocessing = master_dict["preprocessing"]
         self.preprocessing_type = master_dict["preprocessing_type"]
-        self.training_data = master_dict["training_data_processed"]
+        self.training_data = list(filter(lambda x: len(x["img_list"]) == 10, master_dict["training_data_processed"]))

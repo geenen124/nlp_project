@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 from IPython import embed
+from run_experiment import save_top_ranks, save_model
 
 # Outputs image features from words
 class CBOW_REG(nn.Module):
@@ -209,7 +210,7 @@ def validate_cbow_reg_model(vocab_size, w2i, validation_dataset, model_filename=
     prediction = None
 
     for sample_batch in val_dl:
-        word_inputs, outputs_batch = model.format_sample_into_tensors(sample_batch, len(sample_batch), dataset.w2i)
+        word_inputs, outputs_batch = model.format_sample_into_tensors(sample_batch, len(sample_batch), w2i)
         pred = model(word_inputs)
         if outputs is None or prediction is None:
             outputs = outputs_batch
@@ -231,26 +232,33 @@ if __name__=="__main__":
     use_cuda = torch.cuda.is_available()
 
     dataset = SimpleDataset(
-            training_file="IR_train_easy.json",
+            training_file="IR_train_hard.json",
             preprocessing=False,
-            preprocessed_data_filename="easy_training_unprocessed"
+            preprocessed_data_filename="hard_training_unprocessed"
             )
 
     validation_dataset = SimpleDataset(
-            training_file="IR_val_easy.json",
+            training_file="IR_val_hard.json",
             preprocessing=False,
-            preprocessed_data_filename="easy_val_unprocessed"
+            preprocessed_data_filename="hard_val_unprocessed"
     )
 
     model, top_rank_1_arr, \
     top_rank_3_arr, top_rank_5_arr = train_cbow_reg_network(
                                                 dataset,
                                                 validation_dataset,
-                                                num_epochs=5,
+                                                num_epochs=30,
                                                 batch_size=256,
-                                                embedding_space=200,
+                                                embedding_space=300,
                                                 hidden_layer_dim=256,
                                                 learning_rate=0.001,
                                                 use_cuda=use_cuda)
+    save_model("CBOW_REG_HARD",
+            hidden_layer_dim=256,
+            embedding_space=300,
+            learning_rate=0.001,
+            loss_fn_name="smooth_l1",
+            model=model)
+    save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, "./results_cbow_reg_hard.p")
 
     #  graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)

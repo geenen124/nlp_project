@@ -3,12 +3,14 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from data_loader import SimpleDataset
-#  from cbow import CBOW as MODEL, train_cbow_network as train_network, validate_cbow_model as validate_model
-from gru import GRU as MODEL, train_gru_network as train_network, validate_gru_model as validate_model
-# from cbow_regression import CBOW_REG, train_cbow_reg_network, validate_cbow_reg_model
+# from cbow import CBOW as MODEL, train_cbow_network as train_network, validate_cbow_model as validate_model
+# from gru import GRU as MODEL, train_gru_network2 as train_network, validate_gru_model2 as validate_model
+from gru_regression import GRU_REG as MODEL, train_gru_reg_network as train_network, validate_gru_reg_model as validate_model
+# from cbow_regression import CBOW_REG as MODEL, train_cbow_reg_network as train_network, validate_cbow_reg_model as validate_model
 import pickle
-modelname= "GRU"
+modelname= "GRU_REG"
 from IPython import embed
+import gc
 
 def save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, filename):
     top_dict = {
@@ -37,9 +39,9 @@ def graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr):
     # graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
 
 def save_model(model_type, hidden_layer_dim, embedding_space, learning_rate, loss_fn_name, model):
-    if model.embedding_space != embedding_space:
-        print("model embed != embed space")
-        embed()
+    # if model.embedding_space != embedding_space:
+    #     print("model embed != embed space")
+    #     embed()
     filename = model_type+"_"+str(hidden_layer_dim)+"_"+str(embedding_space)+"_"+str(learning_rate)+"_"+loss_fn_name
     torch.save(model.state_dict(), "models/"+filename+".pt")
 
@@ -83,30 +85,20 @@ if __name__ == '__main__':
     easy_dataset = SimpleDataset(
             training_file="IR_train_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_training_processed"
+            preprocessed_data_filename="easy_training_processed_with_questions"
             )
 
-    valid_dataset = SimpleDataset(
-            training_file="IR_val_easy.json",
+    test_dataset = SimpleDataset(
+            training_file="IR_test_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_val_processed"
+            preprocessed_data_filename="easy_val_processed_with_questions"
     )
 
-    #Train Network
-    # train_network(
-    #         easy_dataset,
-    #         valid_dataset,
-    #         num_epochs=10,
-    #         batch_size=64,
-    #         use_cuda = use_cuda)
-
-
-    # loss_fn = torch.nn.MSELoss(size_average=True)
-    # loss_fn = torch.nn.SmoothL1Loss(size_average=True)
+    loss_fn = torch.nn.MSELoss(size_average=True)
+    loss_fn = torch.nn.SmoothL1Loss(size_average=True)
     Embedding_Spaces = [100, 150, 200, 250, 300, 350]
-    #  Hidden_Dims = [56, 256, 512, 1024]
+    Hidden_Dims = [56, 256, 512, 1024]
     Learning_Rates = [0.001, 0.0001, 0.00001]
-    Hidden_Dims = [512, 1024]
 
     best_top_1 = 0
     best_top_params = []
@@ -116,7 +108,10 @@ if __name__ == '__main__':
             for l in Learning_Rates:
                 top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, f"{modelname}_Easy", h, e, l, use_cuda)
                 key = f"embd:{e}, h:{h}, l:{l}"
+                print("CURRENT")
+                print(key)
                 performance_log[key] = [top_rank_1, top_rank_3, top_rank_5]
+
                 if top_rank_1 > best_top_1:
                     best_top_1 = top_rank_1
                     best_top_params = [e, h, l]
@@ -124,13 +119,10 @@ if __name__ == '__main__':
                     print(best_top_params)
     print("BEST TOP PARAMS: ")
     print(best_top_params)
-    save_performance_log(performance_log, "./optimization_log_{modelname}_naive_easy.p")
+    save_performance_log(performance_log, f"./optimization_log_{modelname}_easy.p")
 
 
-
-    # top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, "CBOWREG_Easy", 256, 300, 0.001, use_cuda)
     embedding_space, hidden_layer_dim, learning_rate = best_top_params 
-    # top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, "CBOWREG_Easy", hidden, embedding_space, learning_rate, use_cuda)
     model, top_rank_1, \
             top_rank_3, top_rank_5 = train_network( easy_dataset,
                                                    valid_dataset,
@@ -140,8 +132,47 @@ if __name__ == '__main__':
                                                    hidden_layer_dim=hidden_layer_dim,
                                                    learning_rate=learning_rate,
                                                    use_cuda=use_cuda)
+    save_model("GRU_REG_EASY",
+            hidden_layer_dim=hidden_layer_dim,
+            embedding_space=embedding_space,
+            learning_rate=learning_rate,
+            loss_fn_name="mse",
+            model=model)
 
-    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_{modelname}_naive_easy_best_params_{best_top_params}.p")
+    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_{modelname}_easy_best_params_{best_top_params}.p")
+    print(top_rank_1)
+    print(top_rank_3)
+    print(top_rank_5)
+
+    hard_dataset = SimpleDataset(
+            training_file="IR_train_hard.json",
+            preprocessing=True,
+            preprocessed_data_filename="hard_training_processed_with_questions"
+            )
+
+    valid_hard_dataset = SimpleDataset(
+            training_file="IR_val_hard.json",
+            preprocessing=True,
+            preprocessed_data_filename="hard_val_processed_with_questions"
+    )
+
+
+    model, top_rank_1, \
+            top_rank_3, top_rank_5 = train_network( hard_dataset,
+                                                   valid_hard_dataset,
+                                                   num_epochs=30,
+                                                   batch_size=128,
+                                                   embedding_space=embedding_space,
+                                                   hidden_layer_dim=hidden_layer_dim,
+                                                   learning_rate=learning_rate,
+                                                   use_cuda=use_cuda)
+    save_model("GRU_REG_HARD",
+            hidden_layer_dim=hidden_layer_dim,
+            embedding_space=embedding_space,
+            learning_rate=learning_rate,
+            loss_fn_name="mse",
+            model=model)
+    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_{modelname}_hard_best_params_{best_top_params}.p")
     print(top_rank_1)
     print(top_rank_3)
     print(top_rank_5)

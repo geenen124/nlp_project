@@ -216,7 +216,12 @@ def train_gru_network2(dataset,
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     train_loss = 0.0
-    #  y_onehot = torch.cuda.FloatTensor(batch_size, 10)
+
+    top_rank_1_arr = np.zeros(num_epochs)
+    top_rank_3_arr = np.zeros(num_epochs)
+    top_rank_5_arr = np.zeros(num_epochs)
+
+    # y_onehot = torch.cuda.FloatTensor(batch_size, 10)
 
     for ITER in range(num_epochs):
         print(f"Training Loss for {ITER} :  {train_loss}")
@@ -268,7 +273,8 @@ def train_gru_network2(dataset,
                 elif targets[i] in sorted_probs[i][:5]:
                     top5 += 1
 
-            print(f"Top 1: {top1}\tTop 3: {top3}\tTop 5: {top5}\tLoss: {loss.data[0]}", end="\r") 
+            # print(f"Top 1: {top1}\tTop 3: {top3}\tTop 5: {top5}\tLoss: {loss.data[0]}", end="\r") 
+            print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
 
 
             # backward pass
@@ -285,10 +291,15 @@ def train_gru_network2(dataset,
                                                                 use_cuda=use_cuda,
                                                                 model=model)
 
+        top_rank_1_arr[ITER] = top_rank_1
+        top_rank_3_arr[ITER] = top_rank_3
+        top_rank_5_arr[ITER] = top_rank_5
+
+
     if save_model:
         torch.save(model.state_dict(), "data/gru.pt")
 
-    return model, [], [], []
+    return model, top_rank_1_arr, top_rank_3_arr, top_rank_5_arr
 
 def validate_gru_model2(vocab_size,
                         w2i, validation_dataset,

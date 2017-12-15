@@ -9,7 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 import numpy as np
 
-from run_experiment import graph_top_ranks
+# from run_experiment import save_top_ranks, graph_top_ranks, save_model
 
 # Outputs image features from words
 class GRU_REG(nn.Module):
@@ -36,7 +36,7 @@ class GRU_REG(nn.Module):
 
         if loss_fn is None:
             # self.loss_fn = torch.nn.SmoothL1Loss(size_average=True)
-            loss_fn = torch.nn.MSELoss(size_average=True)
+            self.loss_fn = torch.nn.MSELoss(size_average=True)
         else:
             self.loss_fn = loss_fn
 
@@ -54,7 +54,7 @@ class GRU_REG(nn.Module):
         # output_lengths = Variable(torch.LongTensor(output_lengths))
         # last_out = torch.gather(outputs_pad, 1, output_lengths.view(-1, 1, 1).expand(batch_size, 1, self.hidden_layer_dim)-1).view(batch_size, self.hidden_layer_dim)
 
-        predicted_image_features = self.output_layer(h_gru[0,:,:])
+        predicted_image_features = self.output_layer(F.selu(h_gru[0,:,:]))
         return predicted_image_features
 
 
@@ -97,7 +97,7 @@ class GRU_REG(nn.Module):
 
         return inputs, sentences_mask, outputs, sorted_index
 
-    def top_rank_accuracy(self, predictions, dataset, sorted_index, top_param=3, val=False):
+    def top_rank_accuracy(self, predictions, dataset, sorted_index, top_param=3, val=False, print_failed=False):
         #  if self.use_cuda:
             #  predictions = predictions.cpu()
 
@@ -139,6 +139,10 @@ class GRU_REG(nn.Module):
 
             if actual_slice[similarity_indexes].any():
                 correct_cos += 1
+            else:
+                if print_failed:
+                    print("INCORRECT")
+                    print(sample)
 
         if val == True:
             print(f"{correct} correct out of {total_size} using loss")
@@ -233,7 +237,7 @@ def train_gru_reg_network(dataset,
 
 
 def validate_gru_reg_model(vocab_size, w2i, validation_dataset, model_filename="gru_reg.pt",
-                        model=None, embedding_space = 150):
+                        model=None, embedding_space = 150, print_failed=False):
 
     print("Evaluating model on validation set")
     if model is None:
@@ -269,7 +273,7 @@ def validate_gru_reg_model(vocab_size, w2i, validation_dataset, model_filename="
 
     top_rank_1 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=1, val=True)
     top_rank_3 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=3, val=True)
-    top_rank_5 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=5, val=True)
+    top_rank_5 = model.top_rank_accuracy(predictions, validation_dataset, sorted_index, top_param=5, val=True, print_failed=print_failed)
     return loss.data[0], top_rank_1, top_rank_3, top_rank_5
 
 def len_value_argsort(seq):
@@ -281,24 +285,31 @@ if __name__ == "__main__":
     dataset = SimpleDataset(
             training_file="IR_train_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_training_unprocessed"
+            preprocessed_data_filename="easy_training_processed_with_questions"
             )
 
     validation_dataset = SimpleDataset(
             training_file="IR_val_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_val_unprocessed"
+            preprocessed_data_filename="easy_val_processed_with_questions"
     )
 
     model, top_rank_1_arr, \
     top_rank_3_arr, top_rank_5_arr = train_gru_reg_network(
                                                 dataset,
                                                 validation_dataset,
-                                                num_epochs=20,
+                                                num_epochs=50,
                                                 batch_size=256,
-                                                embedding_space=200,
+                                                embedding_space=300,
                                                 hidden_layer_dim=256,
                                                 learning_rate=0.001,
                                                 use_cuda=use_cuda)
 
-    graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)
+    save_model("GRU_REG_EASY",
+            hidden_layer_dim=256,
+            embedding_space=300,
+            learning_rate=0.001,
+            loss_fn_name="mse",
+            model=model)
+    save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, "./results_gru_reg_easy_with_questions.p")
+    # graph_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr)

@@ -3,15 +3,16 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from data_loader import SimpleDataset
-from cbow import CBOW, train_cbow_network, validate_cbow_model
+# from cbow import CBOW, train_cbow_network, validate_cbow_model
 # from cbow_regression import CBOW_REG, train_cbow_reg_network, validate_cbow_reg_model
+from gru_regression import GRU_REG, train_gru_reg_network, validate_gru_reg_model
 import pickle
 
 def save_top_ranks(top_rank_1_arr, top_rank_3_arr, top_rank_5_arr, filename):
     top_dict = {
             "top_1": top_rank_1_arr,
-            "top_3": top_rank_1_arr,
-            "top_5": top_rank_1_arr,
+            "top_3": top_rank_3_arr,
+            "top_5": top_rank_5_arr,
             }
     pickled_file = open(filename, 'wb')
     pickle.dump(top_dict, pickled_file)
@@ -40,9 +41,9 @@ def save_model(model_type, hidden_layer_dim, embedding_space, learning_rate, los
 def get_model(vocab_size, model_type, hidden_layer_dim, embedding_space, learning_rate, loss_fn_name):
     filename = model_type+"_"+str(hidden_layer_dim)+"_"+str(embedding_space)+"_"+str(learning_rate)+"_"+loss_fn_name
     if os.path.isfile("models/"+filename+".pt"):
-        if model_type=="CBOW_Easy":
+        if model_type=="GRUREG_Easy_cosine":
             print("Loading Model")
-            model = CBOW(vocab_size, hidden_layer_dim=hidden_layer_dim, embedding_space=embedding_space)
+            model = GRU_REG(vocab_size, hidden_layer_dim=hidden_layer_dim, embedding_space=embedding_space)
             model.load_state_dict(torch.load("models/"+filename+".pt"))
         return model
     else:
@@ -52,7 +53,7 @@ def evaluate_at_params(dataset, validation_dataset, model_type, hidden_layer_dim
     model = get_model(dataset.vocab_size, model_type, hidden_layer_dim, embedding_space, learning_rate, loss_fn_name)
     if model is None:
         model, top_rank_1_arr, \
-        top_rank_3_arr, top_rank_5_arr = train_cbow_network(
+        top_rank_3_arr, top_rank_5_arr = train_gru_reg_network(
                                                     dataset,
                                                     validation_dataset,
                                                     num_epochs=5,
@@ -62,12 +63,12 @@ def evaluate_at_params(dataset, validation_dataset, model_type, hidden_layer_dim
                                                     learning_rate=learning_rate,
                                                     use_cuda=use_cuda)
 
-        save_model("CBOW_Easy", h, e, l, loss_fn_name, model)
+        save_model("GRUREG_Easy_cosine", h, e, l, loss_fn_name, model)
         return top_rank_1_arr[-1], top_rank_3_arr[-1], top_rank_5_arr[-1]
 
     else:
         loss, top_rank_1, \
-        top_rank_3, top_rank_5 = validate_cbow_model(dataset.vocab_size, dataset.w2i, validation_dataset, model=model)
+        top_rank_3, top_rank_5 = validate_gru_reg_model(dataset.vocab_size, dataset.w2i, validation_dataset, model=model)
         return top_rank_1, top_rank_3, top_rank_5
 
 
@@ -77,13 +78,13 @@ if __name__ == '__main__':
     easy_dataset = SimpleDataset(
             training_file="IR_train_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_training_processed"
+            preprocessed_data_filename="easy_training_processed_with_questions"
             )
 
     valid_dataset = SimpleDataset(
             training_file="IR_val_easy.json",
             preprocessing=True,
-            preprocessed_data_filename="easy_val_processed"
+            preprocessed_data_filename="easy_val_processed_with_questions"
     )
 
     #Train Network
@@ -107,7 +108,7 @@ if __name__ == '__main__':
     for e in Embedding_Spaces:
         for h in Hidden_Dims:
             for l in Learning_Rates:
-                top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, "CBOW_Easy", h, e, l, use_cuda)
+                top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, "GRUREG_Easy_cosine", h, e, l, use_cuda)
                 key = f"embd:{e}, h:{h}, l:{l}"
                 performance_log[key] = [top_rank_1, top_rank_3, top_rank_5]
                 if top_rank_1 > best_top_1:
@@ -117,7 +118,7 @@ if __name__ == '__main__':
                     print(best_top_params)
     print("BEST TOP PARAMS: ")
     print(best_top_params)
-    save_performance_log(performance_log, "./optimization_log_cbow_naive_easy.p")
+    save_performance_log(performance_log, "./optimization_log_gru_reg_easy_questions.p")
 
 
 
@@ -125,17 +126,57 @@ if __name__ == '__main__':
     embedding_space, hidden_layer_dim, learning_rate = best_top_params 
     # top_rank_1, top_rank_3, top_rank_5 = evaluate_at_params(easy_dataset, valid_dataset, "CBOWREG_Easy", hidden, embedding_space, learning_rate, use_cuda)
     model, top_rank_1, \
-        top_rank_3, top_rank_5 = train_cbow_network(
+        top_rank_3, top_rank_5 = train_gru_reg_network(
                                                     easy_dataset,
                                                     valid_dataset,
-                                                    num_epochs=50,
-                                                    batch_size=64,
+                                                    num_epochs=30,
+                                                    batch_size=256,
                                                     embedding_space=embedding_space,
                                                     hidden_layer_dim=hidden_layer_dim,
                                                     learning_rate=learning_rate,
                                                     use_cuda=use_cuda)
 
-    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_cbow_naive_easy_best_params_{best_top_params}.p")
+    save_model("GRU_REG_EASY",
+            hidden_layer_dim=hidden_layer_dim,
+            embedding_space=embedding_space,
+            learning_rate=learning_rate,
+            loss_fn_name="mse",
+            model=model)
+    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_gru_reg_easy_best_params_{best_top_params}.p")
+    print(top_rank_1)
+    print(top_rank_3)
+    print(top_rank_5)
+
+    hard_dataset = SimpleDataset(
+            training_file="IR_train_hard.json",
+            preprocessing=True,
+            preprocessed_data_filename="hard_training_processed_with_questions"
+            )
+
+    valid_hard_dataset = SimpleDataset(
+            training_file="IR_val_hard.json",
+            preprocessing=True,
+            preprocessed_data_filename="hard_val_processed_with_questions"
+    )
+
+    model, top_rank_1, \
+        top_rank_3, top_rank_5 = train_gru_reg_network(
+                                                    hard_dataset,
+                                                    valid_hard_dataset,
+                                                    num_epochs=30,
+                                                    batch_size=256,
+                                                    embedding_space=embedding_space,
+                                                    hidden_layer_dim=hidden_layer_dim,
+                                                    learning_rate=learning_rate,
+                                                    use_cuda=use_cuda)
+
+    save_model("GRU_REG_HARD",
+            hidden_layer_dim=hidden_layer_dim,
+            embedding_space=embedding_space,
+            learning_rate=learning_rate,
+            loss_fn_name="mse",
+            model=model)
+    save_top_ranks(top_rank_1, top_rank_3, top_rank_5, f"./results_gru_reg_hard_best_params_{best_top_params}.p")
     print(top_rank_1)
     print(top_rank_3)
     print(top_rank_5)
