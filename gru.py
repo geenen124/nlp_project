@@ -53,13 +53,55 @@ class GRU(nn.Module):
         packed_embedding = pack_padded_sequence(embeds.view(batch_size, -1, self.embedding_space), sentences_mask, batch_first=True)
         outputs, h_gru = self.gru(packed_embedding)
 
-        inputs = torch.cat((h_gru[0,:,:], img_inputs), dim=1)
+        hx = h_gru.repeat(10, 1, 1).view(batch_size, -1, self.hidden_layer_dim)
+        inputs = torch.cat((hx, img_inputs), dim=2)
 
-        probability = F.sigmoid(self.output_layer(inputs))
-        return probability
+        #  pred = F.softmax(self.output_layer(inputs), dim=1)
+        pred = self.output_layer(inputs)
+        return pred
+
+        #  inputs = torch.cat((h_gru[0,:,:], img_inputs), dim=1)
+
+        #  probability = F.sigmoid(self.output_layer(inputs))
+        #  return probability
+
+    def transfurm(self, sample_batch, w2i):
+        words_inputs_batch = []
+        words_inputs_len = []
+        imgs_inputs_batch = []
+        targets = []
+        max_length = max(len(sample["processed_word_inputs"]) for sample in sample_batch)
+
+        for sample in sample_batch:
+            words_input = [w2i[x] for x in sample["processed_word_inputs"]]
+            words_input_length = len(words_input)
+            # pad
+            words_input.extend([0] * (max_length - words_input_length))
+
+            imgs_input = np.stack([sample["img_features"][x] for x in sample["img_list"]], 0)
+            target = sample["target"]
+
+            words_inputs_batch.append(words_input)
+            words_inputs_len.append(words_input_length)
+            imgs_inputs_batch.append(imgs_input)
+            targets.append(target)
+
+        words_inputs_len = np.array(words_inputs_len)
+
+        sorted_idx = words_inputs_len.argsort()[::-1]
+        words_inputs_batch = np.array(words_inputs_batch)[sorted_idx]
+        words_inputs_len = words_inputs_len[sorted_idx]
+        imgs_inputs_batch = np.array(imgs_inputs_batch)[sorted_idx]
+        targets = np.array(targets)[sorted_idx]
+        
+        return (torch.from_numpy(words_inputs_batch).type(self.long_type), 
+                words_inputs_len, 
+                torch.from_numpy(imgs_inputs_batch).type(self.float_type), 
+                torch.from_numpy(targets).type(self.long_type))
+        
+
 
     def format_sample_into_tensors(self, sample_batch, sample_batch_length, w2i):
-
         # Forward and backward pass per image, text is fixed
         img_inputs = np.zeros((10*sample_batch_length, 2048))
         outputs = np.zeros((10*sample_batch_length, 1))
@@ -142,6 +184,177 @@ class GRU(nn.Module):
         print(f"{correct} correct out of {total_size}")
         return float(correct) / total_size
 
+def train_gru_network2(dataset,
+                      validation_dataset,
+                      num_epochs=15,
+                      batch_size=32,
+                      loss_fn=None,
+                      save_model=False,
+                      use_cuda=False,
+                      embedding_space=150,
+                      learning_rate=0.0001,
+                      hidden_layer_dim=256):
+
+    dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=lambda x: x,
+            shuffle=True, drop_last=True)
+
+    if loss_fn is None:
+        loss_fn = torch.nn.CrossEntropyLoss()
+        #  loss_fn = torch.nn.MSELoss()
+
+    if use_cuda:
+        loss_fn.cuda()
+
+
+    # Actually make the model
+    model = GRU(dataset.vocab_size, loss_fn=loss_fn,
+                embedding_space=embedding_space, hidden_layer_dim=hidden_layer_dim,
+                use_cuda=use_cuda)
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    train_loss = 0.0
+    #  y_onehot = torch.cuda.FloatTensor(batch_size, 10)
+
+    for ITER in range(num_epochs):
+        print(f"Training Loss for {ITER} :  {train_loss}")
+        print(f"Batch size: {batch_size}")
+        train_loss = 0.0
+        count = 0
+        for sample_batch in dataloader:
+            count += batch_size
+            # Forward and backward pass per image, text is fixed
+            word_inputs, sentences_mask, img_inputs, targets = model.transfurm(sample_batch, dataset.w2i)
+
+            word_inputs = Variable(word_inputs)
+            img_inputs = Variable(img_inputs, requires_grad=True)
+            targets = Variable(targets)
+
+            probs = model(word_inputs, sentences_mask, img_inputs)
+            probs = probs.view(len(targets.data), -1)
+
+            #  y_onehot.zero_()
+            #  y_onehot.scatter_(1, targets.view(-1, 1), 1)
+            #  t = Variable(y_onehot, volatile=True)
+
+            loss = loss_fn(probs, targets)
+            train_loss += loss.data[0]
+
+            #  print(f"Loss : {loss.data[0]} \t Count: {count}", end="\r")
+
+
+            if use_cuda:
+                probs = probs.data.cpu().numpy()
+                targets = targets.data.cpu().numpy()
+            else:
+                probs = probs.data.numpy()
+                targets = targets.data.numpy()
+
+            top5 = 0
+            top3 = 0
+            top1 = 0
+
+            sorted_probs = probs.argsort(axis=1)[:, ::-1]
+            for i in range(len(sample_batch)):
+                if targets[i] == sorted_probs[i][0]:
+                    top5 += 1
+                    top3 += 1
+                    top1 += 1
+                elif targets[i] in sorted_probs[i][:3]:
+                    top5 += 1
+                    top3 += 1
+                elif targets[i] in sorted_probs[i][:5]:
+                    top5 += 1
+
+            print(f"Top 1: {top1}\tTop 3: {top3}\tTop 5: {top5}\tLoss: {loss.data[0]}", end="\r") 
+
+
+            # backward pass
+            optimizer.zero_grad()
+            loss.backward()
+
+            optimizer.step()
+
+        print("\n")
+        validation_loss, top_rank_1, top_rank_3, top_rank_5 = validate_gru_model2(
+                                                                dataset.vocab_size,
+                                                                dataset.w2i,
+                                                                validation_dataset,
+                                                                use_cuda=use_cuda,
+                                                                model=model)
+
+    if save_model:
+        torch.save(model.state_dict(), "data/gru.pt")
+
+    return model, [], [], []
+
+def validate_gru_model2(vocab_size,
+                        w2i, validation_dataset,
+                        model=None, use_cuda=False):
+
+    #  model = model.cpu()
+    #  model.float_type = torch.FloatTensor
+    #  model.long_type = torch.LongTensor
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    val_dl = torch.utils.data.DataLoader(validation_dataset, batch_size=128, collate_fn=lambda x: x)
+
+    top5 = 0
+    top3 = 0
+    top1 = 0
+
+    total_loss = []
+
+    for count, sample_batch in enumerate(val_dl):
+    #  for sample_batch in validation_dataset:
+        word_inputs, sentences_mask, img_inputs, targets = model.transfurm(sample_batch, w2i)
+
+        word_inputs = Variable(word_inputs, volatile=True)
+        img_inputs = Variable(img_inputs, volatile=True)
+        targets = Variable(targets, volatile=True)
+
+        probs = model(word_inputs, sentences_mask, img_inputs)
+        probs = probs.view(-1, 10)
+        loss = loss_fn(probs, targets)
+        total_loss.append(loss.data[0])
+
+        if use_cuda:
+            probs = probs.data.cpu().numpy()
+            targets = targets.data.cpu().numpy()
+        else:
+            probs = probs.data.numpy()
+            targets = targets.data.numpy()
+
+        # Reverse argsort for descending order
+        sorted_probs = probs.argsort(axis=1)[:, ::-1]
+        for i in range(len(sample_batch)):
+            if targets[i] == sorted_probs[i][0]:
+                top5 += 1
+                top3 += 1
+                top1 += 1
+            elif targets[i] in sorted_probs[i][:3]:
+                top5 += 1
+                top3 += 1
+            elif targets[i] in sorted_probs[i][:5]:
+                top5 += 1
+
+    loss = np.average(total_loss)
+
+    print(f"Validation Loss : {loss}")
+    print(f"Top 1: {top1}\nTop 3: {top3}\nTop 5: {top5}\n") 
+    if use_cuda:
+        model = model.cuda()
+        model.float_type = torch.cuda.FloatTensor
+        model.long_type = torch.cuda.LongTensor
+
+    top5 /= len(validation_dataset)
+    top3 /= len(validation_dataset)
+    top1 /= len(validation_dataset)
+
+    return loss, top1, top3, top5
 
 def train_gru_network(dataset,
                       validation_dataset,
@@ -217,6 +430,7 @@ def train_gru_network(dataset,
     return model, top_rank_1_arr, top_rank_3_arr, top_rank_5_arr
 
 
+
 def validate_gru_model(vocab_size,
                         w2i, validation_dataset,
                         model_filename="gru.pt",
@@ -275,6 +489,7 @@ def len_value_argsort(seq):
     return sorted(range(len(seq)), key=lambda x: seq[x], reverse=True)
 
 if __name__=="__main__":
+    import IPython
     use_cuda = torch.cuda.is_available()
 
     dataset = SimpleDataset(
@@ -289,8 +504,9 @@ if __name__=="__main__":
             preprocessed_data_filename="easy_val_processed_with_questions"
     )
 
+
     model, top_rank_1_arr, \
-    top_rank_3_arr, top_rank_5_arr = train_gru_network(
+    top_rank_3_arr, top_rank_5_arr = train_gru_network2(
                                                 dataset,
                                                 validation_dataset,
                                                 num_epochs=30,
